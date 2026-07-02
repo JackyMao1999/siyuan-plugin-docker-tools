@@ -149,7 +149,7 @@ export async function printDoc(
     printWindow.document.title = title;
     printWindow.document.close();
 
-    const printReady = new Promise<void>((resolve) => {
+    await new Promise<void>((resolve) => {
         printWindow.onload = () => {
             const container = printWindow.document.querySelector(".export-wrapper") as HTMLElement;
             if (container) {
@@ -167,14 +167,9 @@ export async function printDoc(
         };
     });
 
-    const timeout = new Promise<void>((resolve) => {
-        setTimeout(() => {
-            try { printWindow.print(); } catch (e) { void e; }
-            resolve();
-        }, 3000);
-    });
-
-    await Promise.race([printReady, timeout]);
+    printWindow.onafterprint = () => {
+        printWindow.close();
+    };
 }
 
 export async function exportToPdf(
