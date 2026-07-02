@@ -1,12 +1,22 @@
 {
     "helloPlugin": "Document Print Tool loaded",
     "byePlugin": "Document Print Tool unloaded",
-    "topBarTitle": "Print Document",
+    "topBarTitle": "Print & PDF Export",
     "printDoc": "Print Document",
+    "exportPdf": "Export PDF",
     "openSettings": "Open Settings",
     "noOpenDoc": "Please open a document first",
-    "printFailed": "Print failed, check console for details",
-
+    "printFailed": "Operation failed, check console for details",
+    "exportStarted": "Generating PDF...",
+    "exportProgress": "Exporting ({current}/{total})",
+    "exportSuccess": "Export complete, {count} files",
+    "exportFailed": "Export failed ({count} files)",
+    "batchExport": "Batch Export PDF",
+    "batchExportTitle": "Batch Export PDF",
+    "selectDocs": "Select documents to export",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
+    "cancel": "Cancel",
     "pageSize": "Page Size",
     "pageSizeDesc": "Select page size for printing",
     "orientation": "Orientation",
@@ -33,5 +43,9 @@
     "pageFooter": "Show Footer",
     "pageFooterDesc": "Show page number in page footer",
     "customCSS": "Custom CSS",
-    "customCSSDesc": "Custom print styles to override defaults"
+    "customCSSDesc": "Custom print styles to override defaults",
+    "pdfImageQuality": "PDF Image Quality",
+    "pdfImageQualityDesc": "Higher values mean sharper images, larger files",
+    "pdfScale": "PDF Render Scale",
+    "pdfScaleDesc": "Higher scale gives sharper output but slower generation"
 }

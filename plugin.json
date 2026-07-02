@@ -19,13 +19,15 @@
     "browser-desktop",
     "browser-mobile",
     "desktop-window",
-    "all"
+    "docker"
   ],
   "displayName": {
+    "default": "Document Export Tools",
     "en_US": "Document Export Tools",
     "zh_CN": "文档导出工具"
   },
   "description": {
+    "default": "Export documents as PDF with configurable formatting",
     "en_US": "Export documents as PDF with configurable formatting",
     "zh_CN": "支持文档导出为 PDF 和格式化打印"
   },

@@ -16,6 +16,7 @@
     "update-version": "node --no-warnings ./scripts/update_version.js"
   },
   "devDependencies": {
+    "@types/jspdf": "^2.0.0",
     "@types/node": "^20.3.0",
     "cross-env": "^7.0.3",
     "fast-glob": "^3.2.12",
@@ -30,5 +31,9 @@
     "vite": "^5.2.9",
     "vite-plugin-static-copy": "^1.0.2",
     "vite-plugin-zip-pack": "^1.0.5"
+  },
+  "dependencies": {
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1"
   }
 }

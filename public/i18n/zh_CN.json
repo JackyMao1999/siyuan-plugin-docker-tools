@@ -1,12 +1,22 @@
 {
     "helloPlugin": "文档打印工具已加载",
     "byePlugin": "文档打印工具已卸载",
-    "topBarTitle": "文档打印",
+    "topBarTitle": "文档打印与PDF导出",
     "printDoc": "打印文档",
+    "exportPdf": "导出 PDF",
     "openSettings": "打开设置",
     "noOpenDoc": "请先打开一个文档",
-    "printFailed": "打印失败，请查看控制台日志",
-
+    "printFailed": "操作失败，请查看控制台日志",
+    "exportStarted": "正在生成 PDF...",
+    "exportProgress": "正在导出 ({current}/{total})",
+    "exportSuccess": "导出完成，共 {count} 个文件",
+    "exportFailed": "导出失败 ({count} 个文件)",
+    "batchExport": "批量导出 PDF",
+    "batchExportTitle": "批量导出 PDF",
+    "selectDocs": "请选择要导出的文档",
+    "selectAll": "全选",
+    "deselectAll": "取消全选",
+    "cancel": "取消",
     "pageSize": "页面大小",
     "pageSizeDesc": "选择打印页面尺寸",
     "orientation": "页面方向",
@@ -33,5 +43,9 @@
     "pageFooter": "显示页脚",
     "pageFooterDesc": "在页面底部显示页码",
     "customCSS": "自定义 CSS",
-    "customCSSDesc": "自定义打印样式，覆盖默认样式"
+    "customCSSDesc": "自定义打印样式，覆盖默认样式",
+    "pdfImageQuality": "PDF 图片质量",
+    "pdfImageQualityDesc": "数值越高图片越清晰，文件越大",
+    "pdfScale": "PDF 渲染精度",
+    "pdfScaleDesc": "缩放倍数越高越清晰，生成越慢"
 }

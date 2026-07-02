@@ -1,4 +1,6 @@
 import { exportMdContent, getFileBlob } from "../api";
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 const DEFAULT_OPTIONS: ExportOptions = {
     pageSize: "A4",
@@ -15,6 +17,8 @@ const DEFAULT_OPTIONS: ExportOptions = {
     pageHeader: true,
     pageFooter: true,
     customCSS: "",
+    pdfImageQuality: 0.95,
+    pdfScale: 2,
 };
 
 function getPageDimensions(pageSize: string, orientation: string): [number, number] {
@@ -59,7 +63,7 @@ async function inlineImages(element: HTMLElement): Promise<void> {
     await Promise.all(promises);
 }
 
-function renderMarkdown(markdown: string, title: string, options: ExportOptions): string {
+function renderMarkdown(markdown: string, title: string, options: ExportOptions, forPdf: boolean = false): string {
     const Lute = (window as any).Lute;
     let html = "";
     if (Lute) {
@@ -71,7 +75,7 @@ function renderMarkdown(markdown: string, title: string, options: ExportOptions)
     const tocHtml = options.showToc ? '<nav class="toc"><h1>Table of Contents</h1><ul id="toc-list"></ul></nav>' : "";
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title +
-        '</title><style>' + getPrintCSS(options) + '</style></head><body>' +
+        '</title><style>' + getPrintCSS(options, forPdf) + '</style></head><body>' +
         '<div class="export-wrapper">' +
         (options.pageHeader ? '<header class="export-header"><h1 class="doc-title">' + title + '</h1></header>' : "") +
         tocHtml +
@@ -81,10 +85,17 @@ function renderMarkdown(markdown: string, title: string, options: ExportOptions)
     );
 }
 
-function getPrintCSS(options: ExportOptions): string {
+function getPrintCSS(options: ExportOptions, forPdf: boolean = false): string {
     const [pageW, pageH] = getPageDimensions(options.pageSize, options.orientation);
+    const pageRule = forPdf
+        ? ""
+        : "@page { size: " + pageW + "mm " + pageH + "mm; margin: " + options.marginTop + "mm " + options.marginRight + "mm " + options.marginBottom + "mm " + options.marginLeft + "mm; }";
+    const bodyMarginRule = forPdf
+        ? "body { margin: " + options.marginTop + "mm " + options.marginRight + "mm " + options.marginBottom + "mm " + options.marginLeft + "mm; }"
+        : "";
     return [
-        "@page { size: " + pageW + "mm " + pageH + "mm; margin: " + options.marginTop + "mm " + options.marginRight + "mm " + options.marginBottom + "mm " + options.marginLeft + "mm; }",
+        pageRule,
+        bodyMarginRule,
         "* { box-sizing: border-box; }",
         "body { font-family: " + options.fontFamily + "; font-size: " + options.fontSize + "pt; line-height: " + options.lineHeight + "; color: #333; background: white; }",
         ".export-wrapper { max-width: 100%; padding: 0; }",
@@ -164,6 +175,79 @@ export async function printDoc(
     });
 
     await Promise.race([printReady, timeout]);
+}
+
+export async function exportToPdf(
+    docId: string,
+    options: ExportOptions
+): Promise<void> {
+    const res = await exportMdContent(docId);
+    if (!res) {
+        throw new Error("exportMdContent returned null for doc " + docId);
+    }
+    const hPath = res.hPath || "";
+    const title = hPath.split("/").pop() || "document";
+    const fullHtml = renderMarkdown(res.content || "", title, options, true);
+
+    const [pageW, pageH] = getPageDimensions(options.pageSize, options.orientation);
+    const scale = options.pdfScale || 2;
+    const mmToPx = 96 / 25.4;
+    const pageWidthPx = Math.round(pageW * mmToPx);
+    const pageHeightPx = Math.round(pageH * mmToPx);
+
+    const container = document.createElement('div');
+    container.innerHTML = fullHtml;
+    container.style.cssText = 'position:absolute;left:-9999px;top:0;width:' + pageWidthPx + 'px;';
+    document.body.appendChild(container);
+
+    await inlineImages(container);
+    await new Promise(r => setTimeout(r, 300));
+
+    const pdf = new jsPDF({
+        orientation: options.orientation === 'landscape' ? 'l' : 'p',
+        unit: 'mm',
+        format: options.pageSize.toLowerCase() as any,
+    });
+
+    const totalHeight = container.scrollHeight;
+    const numPages = Math.ceil(totalHeight / pageHeightPx);
+
+    for (let i = 0; i < numPages; i++) {
+        if (i > 0) pdf.addPage();
+
+        const pageWrapper = document.createElement('div');
+        pageWrapper.style.cssText = 'width:' + pageWidthPx + 'px;height:' + pageHeightPx + 'px;overflow:hidden;position:absolute;left:-9999px;top:0;';
+
+        const clone = container.cloneNode(true) as HTMLElement;
+        clone.style.cssText = 'position:relative;top:0;left:0;margin-top:-' + (i * pageHeightPx) + 'px;';
+        pageWrapper.appendChild(clone);
+        document.body.appendChild(pageWrapper);
+
+        const canvas = await html2canvas(pageWrapper, {
+            scale: scale,
+            useCORS: true,
+            logging: false,
+            width: pageWidthPx,
+            height: pageHeightPx,
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', options.pdfImageQuality || 0.95);
+        pdf.addImage(imgData, 'JPEG', 0, 0, pageW, pageH);
+        document.body.removeChild(pageWrapper);
+    }
+
+    pdf.save(title + '.pdf');
+    document.body.removeChild(container);
+}
+
+export async function fetchDocContent(docId: string): Promise<{ content: string; title: string; hPath: string }> {
+    const res = await exportMdContent(docId);
+    if (!res) {
+        throw new Error("exportMdContent returned null for doc " + docId);
+    }
+    const hPath = res.hPath || "";
+    const title = hPath.split("/").pop() || "document";
+    return { content: res.content || "", title, hPath };
 }
 
 export { DEFAULT_OPTIONS };

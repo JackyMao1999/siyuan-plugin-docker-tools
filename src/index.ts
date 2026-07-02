@@ -9,7 +9,8 @@ import {
 import "./index.scss";
 import "./export-styles.scss";
 import { SettingUtils } from "./libs/setting-utils";
-import { printDoc, DEFAULT_OPTIONS } from "./libs/export-utils";
+import { printDoc, exportToPdf, DEFAULT_OPTIONS, fetchDocContent } from "./libs/export-utils";
+import { showBatchExportDialog } from "./libs/batch-export";
 
 const STORAGE_NAME = "doc-export-config";
 
@@ -29,6 +30,12 @@ export default class DocExportPlugin extends Plugin {
 
             this.addIcons(`<symbol id="iconPrint" viewBox="0 0 32 32">
 <path d="M26.667 8h-1.333v-5.333c0-0.733-0.6-1.333-1.333-1.333h-16c-0.733 0-1.333 0.6-1.333 1.333v5.333h-1.333c-1.467 0-2.667 1.2-2.667 2.667v10.667c0 1.467 1.2 2.667 2.667 2.667h1.333v5.333c0 0.733 0.6 1.333 1.333 1.333h16c0.733 0 1.333-0.6 1.333-1.333v-5.333h1.333c1.467 0 2.667-1.2 2.667-2.667v-10.667c0-1.467-1.2-2.667-2.667-2.667zM9.333 4h13.333v4h-13.333v-4zM22.667 28h-13.333v-8h13.333v8zM26.667 21.333h-1.333v-2.667c0-0.733-0.6-1.333-1.333-1.333h-16c-0.733 0-1.333 0.6-1.333 1.333v2.667h-1.333v-10.667h21.333v10.667zM18.667 22.667h-5.333v1.333h5.333v-1.333z"></path>
+</symbol>`);
+            this.addIcons(`<symbol id="iconPDF" viewBox="0 0 32 32">
+<path d="M24 2h-16c-1.1 0-2 0.9-2 2v24c0 1.1 0.9 2 2 2h16c1.1 0 2-0.9 2-2v-24c0-1.1-0.9-2-2-2zM24 28h-16v-24h16v24zM8 24h16v2h-16zM11 12h3v-3h-3v3zM15 12h3v-3h-3v3zM11 17h3v-3h-3v3zM15 17h3v-3h-3v3zM11 22h3v-3h-3v3zM15 22h3v-3h-3v3z"></path>
+</symbol>`);
+            this.addIcons(`<symbol id="iconBatch" viewBox="0 0 32 32">
+<path d="M27 4h-22c-0.6 0-1 0.4-1 1v22c0 0.6 0.4 1 1 1h22c0.6 0 1-0.4 1-1v-22c0-0.6-0.4-1-1-1zM26 26h-20v-20h20v20zM10 14h12v2h-12zM10 18h12v2h-12zM10 22h8v2h-8zM10 10h12v2h-12z"></path>
 </symbol>`);
 
             this.protyleSlash = [];
@@ -53,6 +60,14 @@ export default class DocExportPlugin extends Plugin {
                 hotkey: "⌃⌥P",
                 callback: () => {
                     this.handlePrint().catch(e => console.error("printDoc failed:", e));
+                },
+            });
+
+            this.addCommand({
+                langKey: "exportPdf",
+                hotkey: "⌃⌥D",
+                callback: () => {
+                    this.handleExportPdf().catch(e => console.error("exportPdf failed:", e));
                 },
             });
 
@@ -227,6 +242,30 @@ export default class DocExportPlugin extends Plugin {
             description: this.i18n.customCSSDesc,
             action: { callback: () => this.settingUtils.takeAndSave("customCSS") }
         });
+
+        this.settingUtils.addItem({
+            key: "pdfImageQuality",
+            value: DEFAULT_OPTIONS.pdfImageQuality,
+            type: "slider",
+            title: this.i18n.pdfImageQuality,
+            description: this.i18n.pdfImageQualityDesc,
+            slider: { min: 0.5, max: 1.0, step: 0.05 },
+            action: { callback: () => this.settingUtils.takeAndSave("pdfImageQuality") }
+        });
+
+        this.settingUtils.addItem({
+            key: "pdfScale",
+            value: DEFAULT_OPTIONS.pdfScale,
+            type: "select",
+            title: this.i18n.pdfScale,
+            description: this.i18n.pdfScaleDesc,
+            options: {
+                "1": "1x",
+                "2": "2x",
+                "3": "3x"
+            },
+            action: { callback: () => this.settingUtils.takeAndSave("pdfScale") }
+        });
     }
 
     private getOptions(): ExportOptions {
@@ -245,6 +284,8 @@ export default class DocExportPlugin extends Plugin {
             pageHeader: Boolean(this.settingUtils.get("pageHeader")) || DEFAULT_OPTIONS.pageHeader,
             pageFooter: Boolean(this.settingUtils.get("pageFooter")) || DEFAULT_OPTIONS.pageFooter,
             customCSS: this.settingUtils.get("customCSS") || DEFAULT_OPTIONS.customCSS,
+            pdfImageQuality: Number(this.settingUtils.get("pdfImageQuality")) || DEFAULT_OPTIONS.pdfImageQuality,
+            pdfScale: Number(this.settingUtils.get("pdfScale")) || DEFAULT_OPTIONS.pdfScale,
         };
     }
 
@@ -255,6 +296,18 @@ export default class DocExportPlugin extends Plugin {
             label: this.i18n.printDoc,
             accelerator: adaptHotkey("⌃⌥P"),
             click: () => this.handlePrint().catch(e => console.error("Print failed:", e))
+        });
+        menu.addItem({
+            icon: "iconPDF",
+            label: this.i18n.exportPdf,
+            accelerator: adaptHotkey("⌃⌥D"),
+            click: () => this.handleExportPdf().catch(e => console.error("PDF export failed:", e))
+        });
+        menu.addSeparator();
+        menu.addItem({
+            icon: "iconBatch",
+            label: this.i18n.batchExport,
+            click: () => this.handleBatchExport().catch(e => console.error("Batch export failed:", e))
         });
         menu.addSeparator();
         menu.addItem({
@@ -280,7 +333,18 @@ export default class DocExportPlugin extends Plugin {
             showMessage(this.i18n.noOpenDoc);
             return null;
         }
-        return editors[0];
+        for (const editor of editors) {
+            try {
+                const el = editor.protyle?.element;
+                if (el && !el.classList.contains('fn__none') && el.offsetParent !== null) {
+                    return editor;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        showMessage(this.i18n.noOpenDoc);
+        return null;
     }
 
     private async handlePrint() {
@@ -294,6 +358,37 @@ export default class DocExportPlugin extends Plugin {
             await printDoc(docId, options);
         } catch (e) {
             console.error("Print failed:", e);
+            showMessage(this.i18n.printFailed, 5000);
+        }
+    }
+
+    private async handleExportPdf() {
+        const editor = this.getEditor();
+        if (!editor) return;
+
+        const docId = editor.protyle.block.rootID;
+        const options = this.getOptions();
+
+        try {
+            showMessage(this.i18n.exportStarted, 3000);
+            await exportToPdf(docId, options);
+        } catch (e) {
+            console.error("PDF export failed:", e);
+            showMessage(this.i18n.printFailed, 5000);
+        }
+    }
+
+    private async handleBatchExport() {
+        const options = this.getOptions();
+        try {
+            await showBatchExportDialog({
+                plugin: this,
+                options,
+                fetchDocContent,
+                exportToPdf,
+            });
+        } catch (e) {
+            console.error("Batch export failed:", e);
             showMessage(this.i18n.printFailed, 5000);
         }
     }

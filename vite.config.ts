@@ -92,6 +92,7 @@ export default defineConfig({
             external: ["siyuan", "process"],
 
             output: {
+                inlineDynamicImports: true,
                 entryFileNames: "[name].js",
                 assetFileNames: (assetInfo) => {
                     if (assetInfo.name === "style.css") {

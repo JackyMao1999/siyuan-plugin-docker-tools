@@ -120,4 +120,13 @@ interface ExportOptions {
     pageHeader: boolean;
     pageFooter: boolean;
     customCSS: string;
+    pdfImageQuality: number;
+    pdfScale: number;
+}
+
+interface DocInfo {
+    id: DocumentId;
+    title: string;
+    notebook?: string;
+    hPath?: string;
 }
