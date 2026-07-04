@@ -1,4 +1,4 @@
-import { exportCurrentDocContent, getFileBlob } from "../api";
+import { exportMdContent, getFileBlob } from "../api";
 
 const DEFAULT_OPTIONS: ExportOptions = {
     pageSize: "A4",
@@ -215,7 +215,10 @@ export async function exportToPdf(
     docId: string,
     options: ExportOptions
 ): Promise<void> {
-    const res = await exportCurrentDocContent(docId);
+    const res = await exportMdContent(docId);
+    if (!res) {
+        throw new Error("exportMdContent returned null for doc " + docId);
+    }
     const hPath = res.hPath || "";
     const title = hPath.split("/").pop() || "document";
     const fullHtml = renderMarkdown(res.content || "", title, options);
