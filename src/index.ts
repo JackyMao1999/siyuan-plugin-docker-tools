@@ -318,7 +318,9 @@ export default class DocExportPlugin extends Plugin {
         for (const editor of editors) {
             try {
                 const el = editor.protyle?.element;
-                if (el && !el.classList.contains('fn__none') && el.offsetParent !== null) {
+                if (!el || el.classList.contains('fn__none')) continue;
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
                     return editor;
                 }
             } catch (e) {

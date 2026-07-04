@@ -213,6 +213,22 @@ export async function exportMdContent(id: DocumentId): Promise<IResExportMdConte
     return request(url, data);
 }
 
+export async function exportCurrentDocContent(id: DocumentId): Promise<{ hPath: string; content: string }> {
+    try {
+        const hPath = await getHPathByID(id);
+        const hpath = hPath || "";
+        const rows = await sql(`SELECT markdown FROM blocks WHERE root_id = '${id}' ORDER BY path ASC`);
+        if (!rows || !Array.isArray(rows) || rows.length === 0) {
+            return { hPath: hpath, content: "" };
+        }
+        const content = rows.map((row: any) => row.markdown || "").join("\n");
+        return { hPath: hpath, content: content };
+    } catch (e) {
+        console.error("exportCurrentDocContent failed:", e);
+        throw e;
+    }
+}
+
 export async function exportResources(paths: string[], name: string): Promise<IResExportResources> {
     let data = { paths: paths, name: name }
     let url = '/api/export/exportResources';

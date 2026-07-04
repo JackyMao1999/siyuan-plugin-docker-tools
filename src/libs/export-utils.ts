@@ -1,4 +1,4 @@
-import { exportMdContent, getFileBlob } from "../api";
+import { exportCurrentDocContent, getFileBlob } from "../api";
 
 const DEFAULT_OPTIONS: ExportOptions = {
     pageSize: "A4",
@@ -107,8 +107,9 @@ function renderMarkdown(markdown: string, title: string, options: ExportOptions)
     }
     const tocHtml = options.showToc ? '<nav class="toc"><h1>Table of Contents</h1><ul id="toc-list"></ul></nav>' : "";
     return (
-        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title +
-        '</title><style>' + getPrintCSS(options) + '</style></head><body>' +
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title + '</title>' +
+        '<base href="' + window.location.origin + '/">' +
+        '<style>' + getPrintCSS(options) + '</style></head><body>' +
         '<div class="export-wrapper">' +
         (options.pageHeader ? '<header class="export-header"><h1 class="doc-title">' + title + '</h1></header>' : "") +
         tocHtml +
@@ -214,10 +215,7 @@ export async function exportToPdf(
     docId: string,
     options: ExportOptions
 ): Promise<void> {
-    const res = await exportMdContent(docId);
-    if (!res) {
-        throw new Error("exportMdContent returned null for doc " + docId);
-    }
+    const res = await exportCurrentDocContent(docId);
     const hPath = res.hPath || "";
     const title = hPath.split("/").pop() || "document";
     const fullHtml = renderMarkdown(res.content || "", title, options);
@@ -255,9 +253,19 @@ export async function exportRenderedToPdf(
         'html, body { color-scheme: light; background: white !important; }',
         '* { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }',
         '.protyle-wysiwyg .protyle-background { display: none !important; }',
+        '.export-wrapper, .protyle-wysiwyg { width: auto !important; max-width: 100% !important; min-width: 0 !important; }',
+        '.protyle-wysiwyg { padding-left: 0 !important; margin-left: 0 !important; }',
+        '.protyle-wysiwyg [data-node-id] { padding-left: 0 !important; margin-left: 0 !important; }',
+        '.protyle-wysiwyg .h1 > div, .protyle-wysiwyg .h2 > div, .protyle-wysiwyg .h3 > div, .protyle-wysiwyg .p > div, .protyle-wysiwyg .li > div { padding-left: 0 !important; }',
+        '.protyle-wysiwyg img, .protyle-wysiwyg .img img { max-width: 100% !important; height: auto !important; }',
+        '.protyle-wysiwyg pre, .protyle-wysiwyg .code-block { white-space: pre-wrap !important; word-break: break-all !important; max-width: 100% !important; overflow-x: hidden !important; }',
+        '.protyle-wysiwyg table { table-layout: fixed !important; max-width: 100% !important; }',
+        '.protyle-wysiwyg th, .protyle-wysiwyg td { word-wrap: break-word !important; overflow-wrap: break-word !important; }',
+        '.protyle-wysiwyg [data-type], .protyle-wysiwyg .h1, .protyle-wysiwyg .h2, .protyle-wysiwyg .h3, .protyle-wysiwyg .p, .protyle-wysiwyg .li, .protyle-wysiwyg .bq { max-width: 100% !important; overflow-wrap: break-word !important; }',
         '.protyle-wysiwyg [style*="background"] { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }',
         '@media print {',
         '  body { background: white !important; }',
+        '  .protyle-wysiwyg pre, .protyle-wysiwyg .code-block { white-space: pre-wrap !important; word-break: break-all !important; }',
         '}',
     ].join('\n');
     const fullHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title + '</title>' +
