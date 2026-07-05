@@ -269,9 +269,9 @@ export default class DocExportPlugin extends Plugin {
             fontSize: Number(this.settingUtils.get("fontSize")) || DEFAULT_OPTIONS.fontSize,
             lineHeight: Number(this.settingUtils.get("lineHeight")) || DEFAULT_OPTIONS.lineHeight,
             codeFontSize: Number(this.settingUtils.get("codeFontSize")) || DEFAULT_OPTIONS.codeFontSize,
-            showToc: Boolean(this.settingUtils.get("showToc")) || DEFAULT_OPTIONS.showToc,
-            pageHeader: Boolean(this.settingUtils.get("pageHeader")) || DEFAULT_OPTIONS.pageHeader,
-            pageFooter: Boolean(this.settingUtils.get("pageFooter")) || DEFAULT_OPTIONS.pageFooter,
+            showToc: this.settingUtils.get("showToc") ?? DEFAULT_OPTIONS.showToc,
+            pageHeader: this.settingUtils.get("pageHeader") ?? DEFAULT_OPTIONS.pageHeader,
+            pageFooter: this.settingUtils.get("pageFooter") ?? DEFAULT_OPTIONS.pageFooter,
             customCSS: this.settingUtils.get("customCSS") || DEFAULT_OPTIONS.customCSS,
             exportMethod: (this.settingUtils.get("exportMethod") as "dom" | "markdown") || DEFAULT_OPTIONS.exportMethod,
         };

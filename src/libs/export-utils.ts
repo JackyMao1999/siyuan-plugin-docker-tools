@@ -15,7 +15,7 @@ const DEFAULT_OPTIONS: ExportOptions = {
     pageHeader: true,
     pageFooter: true,
     customCSS: "",
-    exportMethod: "dom",
+    exportMethod: "markdown",
 };
 
 function getPageDimensions(pageSize: string, orientation: string): [number, number] {
