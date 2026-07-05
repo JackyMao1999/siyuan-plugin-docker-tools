@@ -1,4 +1,4 @@
-import { exportMdContent, getFileBlob } from "../api";
+import { exportMdContent, getFileBlob, sql } from "../api";
 
 const DEFAULT_OPTIONS: ExportOptions = {
     pageSize: "A4",
@@ -58,6 +58,90 @@ async function inlineImages(element: HTMLElement): Promise<void> {
         promises.push(promise);
     });
     await Promise.all(promises);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function fetchDocumentImages(docId: string): Promise<Map<string, string>> {
+    const rows = await sql(
+        `SELECT markdown FROM blocks WHERE root_id = '${docId}' AND subtype = 'image'`
+    );
+    const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/;
+    const paths = new Set<string>();
+    for (const row of rows) {
+        const match = imgRegex.exec(row.markdown || '');
+        if (match) paths.add(match[2]);
+    }
+    if (paths.size === 0) return new Map();
+
+    const result = new Map<string, string>();
+    await Promise.all([...paths].map(async (path) => {
+        try {
+            const variants = [path];
+            if (!path.startsWith('/')) variants.push('/' + path);
+            else variants.push(path.slice(1));
+            let blob: Blob | null = null;
+            for (const p of variants) {
+                blob = await getFileBlob(p);
+                if (blob) break;
+            }
+            if (blob) result.set(path, await blobToDataUrl(blob));
+        } catch (e) {
+            console.warn("Failed to fetch image block:", path, e);
+        }
+    }));
+    return result;
+}
+
+function replaceImageSrcInHtml(html: string, imageMap: Map<string, string>): string {
+    return html.replace(/<img\s+[^>]*src="([^"]+)"[^>]*>/g, (match, src) => {
+        const candidates = [src];
+        if (!src.startsWith('/')) candidates.push('/' + src);
+        else candidates.push(src.slice(1));
+        for (const c of candidates) {
+            if (imageMap.has(c)) return match.replace(`src="${src}"`, `src="${imageMap.get(c)}"`);
+        }
+        return match;
+    });
+}
+
+async function preprocessMarkdownImages(markdown: string): Promise<string> {
+    const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+    const cache = new Map<string, string>();
+    const uniqueSrcs = new Set<string>();
+    let match: RegExpExecArray | null;
+    while ((match = imgRegex.exec(markdown)) !== null) {
+        uniqueSrcs.add(match[2]);
+    }
+    if (uniqueSrcs.size === 0) return markdown;
+
+    await Promise.all([...uniqueSrcs].map(async (src) => {
+        try {
+            const pathsToTry = [src];
+            if (!src.startsWith('/')) pathsToTry.push('/' + src);
+            else pathsToTry.push(src.slice(1));
+            let blob: Blob | null = null;
+            for (const p of pathsToTry) {
+                blob = await getFileBlob(p);
+                if (blob) break;
+            }
+            if (blob) cache.set(src, await blobToDataUrl(blob));
+        } catch (e) {
+            console.warn("Failed to preprocess image:", src, e);
+        }
+    }));
+
+    return markdown.replace(imgRegex, (m, alt, src) => {
+        const dataUrl = cache.get(src);
+        return dataUrl ? `![${alt}](${dataUrl})` : m;
+    });
 }
 
 function getPrintCSS(options: ExportOptions): string {
@@ -221,7 +305,13 @@ export async function exportToPdf(
     }
     const hPath = res.hPath || "";
     const title = hPath.split("/").pop() || "document";
-    const fullHtml = renderMarkdown(res.content || "", title, options);
+
+    const imageMap = await fetchDocumentImages(docId);
+    const content = await preprocessMarkdownImages(res.content || "");
+    let fullHtml = renderMarkdown(content, title, options);
+    if (imageMap.size > 0) {
+        fullHtml = replaceImageSrcInHtml(fullHtml, imageMap);
+    }
     await renderHtmlInIframe(fullHtml, title);
 }
 

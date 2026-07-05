@@ -232,16 +232,13 @@ export async function getFile(path: string): Promise<any> {
 }
 
 export const getFileBlob = async (path: string): Promise<Blob | null> => {
-    const endpoint = '/api/file/getFile'
-    let response = await fetch(endpoint, {
+    const response = await fetch('/api/file/getFile', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: path })
     });
-    if (!response.ok) {
-        return null;
-    }
-    let data = await response.blob();
-    return data;
+    if (!response.ok) return null;
+    return await response.blob();
 }
 
 // **************************************** Notification ****************************************
