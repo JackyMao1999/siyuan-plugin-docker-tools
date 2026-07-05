@@ -1,5 +1,5 @@
 {
-  "name": "plugin-doc-export-tools",
+  "name": "siyuan-plugin-docker-tools",
   "version": "1.0.0",
   "type": "module",
   "description": "Export documents to PDF and formatted printing for SiYuan",

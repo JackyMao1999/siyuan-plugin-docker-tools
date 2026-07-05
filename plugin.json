@@ -1,7 +1,7 @@
 {
-  "name": "plugin-doc-export-tools",
-  "author": "siyuan-plugin",
-  "url": "https://github.com/siyuan-note/plugin-sample-vite-svelte",
+  "name": "siyuan-plugin-docker-tools",
+  "author": "JackyMao",
+  "url": "https://github.com/JackyMao1999/siyuan-plugin-docker-tools",
   "version": "1.0.0",
   "minAppVersion": "3.2.1",
   "backends": [
@@ -22,9 +22,9 @@
     "docker"
   ],
   "displayName": {
-    "default": "Document Export Tools",
-    "en_US": "Document Export Tools",
-    "zh_CN": "文档导出工具"
+    "default": "siyuan-plugin-docker-tools",
+    "en_US": "siyuan-plugin-docker-tools",
+    "zh_CN": "Docker端工具集"
   },
   "description": {
     "default": "Export documents as PDF with configurable formatting",
@@ -41,6 +41,7 @@
     ]
   },
   "keywords": [
+    "docker",
     "export",
     "pdf",
     "print",
