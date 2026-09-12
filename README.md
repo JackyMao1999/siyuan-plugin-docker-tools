@@ -34,7 +34,8 @@ dialog → `Finish`. See the built-in **Help** (search "user identity") for deta
 | --- | --- | --- |
 | Drive · "My Space" | ✅ | Default of the "Drive" source, including subfolders |
 | Wiki knowledge base | ✅ | Switch the source to "Feishu Wiki" — lists all spaces the identity has joined |
-| Documents anywhere | ✅ all / keyword search | Source "Search accessible docs" — **leave the keyword empty to list everything** (auto-paginated); requires the `search:docs:read` scope |
+| All accessible content | ✅ | Source "Search accessible docs" — **empty keyword** lists all Wiki spaces (no search API call) |
+| Keyword search | ⚠️ user identity recommended | A keyword calls Feishu's search API, which is **user-scoped**; the app identity often returns 0 results. Requires `search:docs:read` |
 | Shared space / specific folder | ⚠️ Manual | There is no "list all shared spaces" API; paste the folder link or `folder_token` into "Folder token / link" |
 | "My Documents Library" | ❌ | Personal page-tree module (beta), a separate module from "My Space"; no public Open API |
 

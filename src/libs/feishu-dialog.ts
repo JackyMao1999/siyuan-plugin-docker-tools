@@ -375,13 +375,20 @@ export class FeishuSyncDialog {
         this.setStatus("");
     }
 
-    /** 搜索当前身份有权限的文档并展示结果（自动翻页，直到取完或达到上限） */
+    /**
+     * 搜索来源的入口：
+     *  - 关键词为空 → 列出「全部可访问内容」（知识空间树），不走搜索接口
+     *  - 关键词非空 → 调用搜索接口（自动翻页）
+     */
     private async loadSearchResults() {
         const keyword = (this.searchInput.value || "").trim();
+        if (!keyword) {
+            await this.loadAllAccessible();
+            return;
+        }
         if (keyword.length > 30) {
             this.appendLog("关键词最长 30 个字符，已自动截取前 30 个字符。");
         }
-        // 关键词可以为空：接口允许 query 为空字符串，此时返回全部可见文档
         const query = keyword.slice(0, 30);
         const maxItems = 500;
         this.setStatus(this.t("feishuSearchSearching", "搜索中..."));
@@ -391,8 +398,10 @@ export class FeishuSyncDialog {
             let loaded = 0;
             let total = 0;
             let truncated = false;
+            let raw: any;
             do {
                 const result = await this.deps.client.searchDocs(query, pageToken || undefined, 20);
+                if (raw === undefined) raw = result.raw;
                 total = result.total || total;
                 for (const item of result.items) {
                     this.appendSearchResult(item);
@@ -407,7 +416,7 @@ export class FeishuSyncDialog {
             } while (pageToken);
 
             if (!loaded) {
-                this.appendLog(this.t("feishuSearchEmpty", "没有搜索到文档（也可能是应用缺少 search:docs:read 权限）"));
+                this.explainEmptySearch(raw);
                 return;
             }
             this.appendLog(
@@ -418,9 +427,64 @@ export class FeishuSyncDialog {
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
             this.appendLog(`搜索失败：${message}`);
-            this.appendLog("若为权限错误，请在飞书后台为应用开通 search:docs:read 权限后重试。");
+            this.appendLog("若为权限错误，请确认 search:docs:read 已开通，并且已「创建版本 → 发布」后重试。");
         } finally {
             this.setStatus("");
+        }
+    }
+
+    /** 关键词为空时：列出全部可访问的知识空间（不依赖搜索接口） */
+    private async loadAllAccessible() {
+        this.setStatus("正在列出全部可访问内容...");
+        try {
+            if (!this.spaceSelect.options.length || !this.spaceSelect.value) {
+                await this.loadSpaces();
+            }
+            const options = Array.from(this.spaceSelect.options).filter((option) => !!option.value);
+            if (!options.length) {
+                this.appendLog("没有找到可访问的知识空间；请确认应用已被加入知识库并已发布权限。");
+                return;
+            }
+            for (const option of options) {
+                const spaceId = option.value;
+                const spaceName = option.textContent || spaceId;
+                const meta: TreeNodeMeta = {
+                    kind: "space",
+                    key: `space:${spaceId}`,
+                    title: spaceName,
+                    spaceId,
+                    expandable: true,
+                    path: [],
+                    loader: async () => this.loadWikiNodeMetas(spaceId, undefined, [spaceName]),
+                };
+                this.treeEl.appendChild(this.createNodeElement(meta, 0));
+            }
+            this.appendLog(`已列出 ${options.length} 个知识空间（展开即可查看节点）。`);
+            this.appendLog("提示：这是「全部可访问内容」的知识库部分；云盘请用「飞书云文档」来源，按关键词查找请在上方输入关键词。");
+        } catch (e) {
+            this.appendLog(`列出全部内容失败：${e instanceof Error ? e.message : e}`);
+        } finally {
+            this.setStatus("");
+        }
+    }
+
+    /** 搜索返回空结果时给出可操作的排查提示 */
+    private explainEmptySearch(raw: any) {
+        this.appendLog("搜索接口返回 0 条结果。");
+        this.appendLog(
+            "可能原因：① 飞书搜索接口按「用户可见」设计，应用（机器人）身份通常搜不到内容；" +
+            "② search:docs:read 权限只开通了、但没有「创建版本并发布」；③ 关键词确实没有匹配。"
+        );
+        if (this.deps.isUserMode && !this.deps.isUserMode()) {
+            this.appendLog("👉 当前是「应用（机器人）身份」，建议到插件设置把「飞书访问身份」改为「用户身份」并完成授权后重试。");
+        }
+        if (raw) {
+            try {
+                const text = JSON.stringify(raw);
+                this.appendLog(`接口原始返回：${text.length > 400 ? text.slice(0, 400) + "..." : text}`);
+            } catch (e) {
+                // 忽略
+            }
         }
     }
 

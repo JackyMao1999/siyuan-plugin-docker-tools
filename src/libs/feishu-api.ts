@@ -380,6 +380,8 @@ export class FeishuClient {
         hasMore: boolean;
         pageToken: string;
         total: number;
+        /** 原始响应，便于排查空结果原因 */
+        raw?: any;
     }> {
         const docTypes = ["DOC", "DOCX", "SHEET", "BITABLE", "MINDNOTE", "FILE", "SLIDES", "SHORTCUT"];
         const data = await this.request("/open-apis/search/v2/doc_wiki/search", {
@@ -392,7 +394,8 @@ export class FeishuClient {
                 page_token: pageToken,
             },
         });
-        const items: FeishuSearchResult[] = (data?.res_units || [])
+        const units = data?.res_units || data?.items || data?.entities || [];
+        const items: FeishuSearchResult[] = units
             .map((unit: any) => {
                 const meta = unit?.result_meta || {};
                 return {
@@ -411,6 +414,7 @@ export class FeishuClient {
             hasMore: !!data?.has_more,
             pageToken: data?.page_token || "",
             total: data?.total || 0,
+            raw: data,
         };
     }
 
