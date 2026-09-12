@@ -181,8 +181,10 @@ export class FeishuSync {
         return this.records;
     }
 
-    clearRecords(): void {
+    /** 清空全部同步记录（下次同步会当作全新文档处理） */
+    async clearRecords(): Promise<void> {
         this.records = {};
+        await this.saveRecords();
     }
 
     private async docExists(docId: string): Promise<boolean> {
@@ -192,6 +194,32 @@ export class FeishuSync {
         } catch (e) {
             return false;
         }
+    }
+
+    /** 按笔记本 + 人类可读路径查找已存在的文档（用于避免重复创建） */
+    private async findDocIdByPath(notebook: string, hpath: string): Promise<string | null> {
+        if (!notebook || !hpath) return null;
+        try {
+            const box = notebook.replace(/'/g, "''");
+            const path = hpath.replace(/'/g, "''");
+            const rows = await sql(`select id from blocks where box = '${box}' and hpath = '${path}' and type = 'd' limit 1`);
+            return rows?.[0]?.id || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /** 清空文档原有内容并写入新的分块内容 */
+    private async writeChunks(docId: string, chunks: string[]): Promise<boolean> {
+        const children = await getChildBlocks(docId);
+        for (const child of children || []) {
+            await deleteBlock(child.id);
+        }
+        for (let i = 0; i < chunks.length; i++) {
+            const ops = await appendBlock("markdown", chunks[i], docId);
+            if (!ops) return false;
+        }
+        return true;
     }
 
     /** 下载飞书素材并上传到思源资源目录，返回资源相对路径 */
@@ -252,7 +280,11 @@ export class FeishuSync {
     async syncItem(item: FeishuSyncItem, options: FeishuSyncOptions, log?: (msg: string) => void): Promise<SyncResult> {
         const record = this.records[item.key];
         if (options.incremental && record && item.editTime && record.editTime === item.editTime) {
-            return { item, status: "skipped", docId: record.docId, message: "内容未变化" };
+            // 记录里说没变化，但思源里的文档可能已经被删除/移动，这里再校验一次，避免误跳过
+            if (await this.docExists(record.docId)) {
+                return { item, status: "skipped", docId: record.docId, message: "内容未变化" };
+            }
+            log?.(`  同步记录中的文档已不存在（可能已被删除），将重新创建`);
         }
 
         try {
@@ -265,22 +297,23 @@ export class FeishuSync {
             const title = sanitizeTitle(item.title);
             const path = joinPath(options.rootPath, ...item.path, title);
 
-            let docId = record?.docId;
-            let status: SyncStatus = "created";
-
             // 分块写入：避免单次请求内容过大导致写入被截断
             const chunks = splitMarkdownChunks(markdown);
 
-            if (docId && await this.docExists(docId)) {
-                const children = await getChildBlocks(docId);
-                for (const child of children || []) {
-                    await deleteBlock(child.id);
+            // 1) 优先复用同步记录里的文档；2) 记录失效时按路径查找已有文档，避免重复创建
+            let docId: string | null = record?.docId && await this.docExists(record.docId) ? record.docId : null;
+            if (!docId) {
+                docId = await this.findDocIdByPath(options.notebook, path);
+                if (docId) {
+                    log?.(`  已存在同路径文档，直接覆盖：${path}`);
                 }
-                for (let i = 0; i < chunks.length; i++) {
-                    const ops = await appendBlock("markdown", chunks[i], docId);
-                    if (!ops) {
-                        return { item, status: "failed", docId, message: `写入文档内容失败（第 ${i + 1}/${chunks.length} 批）` };
-                    }
+            }
+
+            let status: SyncStatus;
+            if (docId) {
+                const ok = await this.writeChunks(docId, chunks);
+                if (!ok) {
+                    return { item, status: "failed", docId, message: "写入文档内容失败" };
                 }
                 status = "updated";
             } else {
@@ -294,6 +327,7 @@ export class FeishuSync {
                         }
                     }
                 }
+                status = "created";
             }
 
             if (!docId) {

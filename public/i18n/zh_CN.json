@@ -120,5 +120,7 @@
     "feishuLinkParse": "解析",
     "feishuLinkHint": "把飞书里的链接直接粘进来即可：文档 /docx/、旧版文档 /docs/、知识库 /wiki/、文件夹 /folder/。文件夹会展开成目录树，文档可直接勾选同步。",
     "feishuLinkEmpty": "请输入飞书文档 / 知识库 / 文件夹链接",
-    "feishuLinkUnsupported": "暂不支持该链接"
+    "feishuLinkUnsupported": "暂不支持该链接",
+    "feishuResetRecords": "重置同步记录",
+    "feishuResetRecordsConfirm": "重置后将忽略历史记录，下次同步会按「全新文档」处理（同路径的已有文档会被覆盖，不会重复创建）。确定继续？"
 }

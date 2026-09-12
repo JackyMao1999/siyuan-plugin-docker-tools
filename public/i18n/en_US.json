@@ -120,5 +120,7 @@
     "feishuLinkParse": "Parse",
     "feishuLinkHint": "Paste any Feishu link: doc /docx/, legacy doc /docs/, Wiki /wiki/, folder /folder/. Folders expand into a tree; documents can be checked and synced directly.",
     "feishuLinkEmpty": "Please enter a Feishu doc / Wiki / folder link",
-    "feishuLinkUnsupported": "This link type is not supported"
+    "feishuLinkUnsupported": "This link type is not supported",
+    "feishuResetRecords": "Reset sync records",
+    "feishuResetRecordsConfirm": "After resetting, history is ignored and the next sync treats everything as brand new (existing docs at the same path are overwritten, not duplicated). Continue?"
 }

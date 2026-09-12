@@ -2,7 +2,7 @@
  * 飞书知识库同步对话框
  */
 
-import { Dialog, showMessage } from "siyuan";
+import { Dialog, confirm, showMessage } from "siyuan";
 import { FeishuClient, FeishuDriveFile, FeishuWikiNode } from "./feishu-api";
 import {
     DEFAULT_SYNC_OPTIONS,
@@ -232,6 +232,7 @@ export class FeishuSyncDialog {
     <div class="feishu-sync__log" id="feishu-log"></div>
     <div class="feishu-sync__footer">
         <button id="feishu-auth-btn" class="b3-button b3-button--outline">${this.t("feishuAuthMenu", "用户授权")}</button>
+        <button id="feishu-reset-btn" class="b3-button b3-button--outline">${this.t("feishuResetRecords", "重置同步记录")}</button>
         <span class="fn__space"></span>
         <button id="feishu-sync-btn" class="b3-button b3-button--text">${this.t("feishuStartSync", "开始同步")}</button>
     </div>
@@ -266,6 +267,19 @@ export class FeishuSyncDialog {
         };
         (this.dialog.element.querySelector("#feishu-auth-btn") as HTMLElement).onclick = () => {
             this.deps.openAuth?.();
+        };
+        (this.dialog.element.querySelector("#feishu-reset-btn") as HTMLElement).onclick = () => {
+            confirm(
+                this.t("feishuResetRecords", "重置同步记录"),
+                this.t("feishuResetRecordsConfirm", "重置后将忽略历史记录，下次同步会按「全新文档」处理（同路径的已有文档会被覆盖，不会重复创建）。确定继续？"),
+                () => {
+                    void (async () => {
+                        await this.deps.sync.clearRecords();
+                        this.appendLog("已重置同步记录，下次同步将按全新文档处理。");
+                        showMessage("已重置同步记录", 3000);
+                    })();
+                }
+            );
         };
         this.recursiveInput.onchange = () => this.collectOptions();
         this.assetsInput.onchange = () => this.collectOptions();
