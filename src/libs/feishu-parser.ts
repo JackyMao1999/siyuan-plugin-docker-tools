@@ -69,6 +69,19 @@ function escapeMd(text: string): string {
         .replace(/\r?\n/g, " ");
 }
 
+/** 飞书颜色枚举 -> 思源字体色/背景色变量序号（思源为 1~13） */
+function colorIndex(value: any): number {
+    const n = Number(value) || 0;
+    if (n <= 0) return 0;
+    return Math.min(13, Math.max(1, n));
+}
+
+/** 渲染行内公式（内容做归一化，避免前后空格导致不被解析） */
+function renderInlineMath(content: string): string {
+    const formula = (content || "").replace(/\s*\n\s*/g, " ").trim();
+    return formula ? `$${formula}$` : "";
+}
+
 function inlineFrom(elements: FeishuTextElement[] | undefined): string {
     if (!elements || !elements.length) return "";
     let out = "";
@@ -83,6 +96,15 @@ function inlineFrom(elements: FeishuTextElement[] | undefined): string {
             if (style.italic) text = "*" + text + "*";
             if (style.strikethrough) text = "~~" + text + "~~";
             if (style.underline) text = "<u>" + text + "</u>";
+            // 字体颜色 / 背景色：使用思源自身的样式变量，保留飞书里的着色
+            const textColor = colorIndex(style.text_color);
+            if (textColor) {
+                text = `<span style="color: var(--b3-font-color${textColor})">${text}</span>`;
+            }
+            const bgColor = colorIndex(style.background_color);
+            if (bgColor) {
+                text = `<span style="background-color: var(--b3-font-background${bgColor})">${text}</span>`;
+            }
             const link = style.link?.url;
             if (link) {
                 let url = link;
@@ -91,7 +113,7 @@ function inlineFrom(elements: FeishuTextElement[] | undefined): string {
             }
             out += text;
         } else if (el.equation) {
-            out += `$${el.equation.content || ""}$`;
+            out += renderInlineMath(el.equation.content || "");
         } else if (el.mention_user) {
             out += `@${el.mention_user.name || el.mention_user.user_id || "user"}`;
         } else if (el.mention_doc) {
@@ -128,6 +150,8 @@ async function renderChildren(ids: string[] | undefined, state: ParserState, pre
     for (const id of ids) {
         const block = state.map.get(id);
         if (!block) continue;
+        // 同一块被多处引用时只渲染一次，避免重复内容
+        if (state.visited.has(block.block_id)) continue;
         const isList = block.block_type === 12 || block.block_type === 13 || block.block_type === 17;
         let text: string;
         if (block.block_type === 13) {
@@ -218,14 +242,19 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             return text ? prefix + "#".repeat(level) + " " + text : "";
         }
         case 12: { // 无序列表
+            const marker = "- ";
             const text = inlineFrom(elements);
-            const child = await renderChildren(block.children, state, prefix + "  ");
-            return (text ? prefix + "- " + text : prefix + "-") + (child ? "\n" + child : "");
+            const child = await renderChildren(block.children, state, prefix + " ".repeat(marker.length));
+            return (text ? prefix + marker + text : prefix + "-") + (child ? "\n" + child : "");
         }
         case 13: { // 有序列表
+            // 按飞书返回的序号（sequence）渲染，缺失时按顺序递增
+            const sequence = Number(style?.sequence);
+            const index = Number.isFinite(sequence) && sequence > 0 ? sequence : orderedIndex;
+            const marker = `${index}. `;
             const text = inlineFrom(elements);
-            const child = await renderChildren(block.children, state, prefix + "  ");
-            return (text ? prefix + `${orderedIndex}. ` + text : prefix + `${orderedIndex}.`) + (child ? "\n" + child : "");
+            const child = await renderChildren(block.children, state, prefix + " ".repeat(marker.length));
+            return (text ? prefix + marker + text : prefix + `${index}.`) + (child ? "\n" + child : "");
         }
         case 14: { // 代码块
             const lang = CODE_LANGUAGE[style?.language] || "";
@@ -239,16 +268,16 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             if (!content) return "";
             return prefixLines(content.split("\n").map((line) => "> " + line).join("\n"), prefix);
         }
-        case 16: { // 公式块
+        case 16: { // 公式块 -> 独立成段的行内公式
             const content = block.equation?.content || inlineFrom(elements);
-            if (!content) return "";
-            return prefixLines(`$$\n${content}\n$$`, prefix);
+            const math = renderInlineMath(content);
+            return math ? prefix + math : "";
         }
         case 17: { // 待办
+            const marker = style?.done ? "- [x] " : "- [ ] ";
             const text = inlineFrom(elements);
-            const checked = style?.done ? "x" : " ";
-            const child = await renderChildren(block.children, state, prefix + "  ");
-            return (prefix + `- [${checked}] ` + text) + (child ? "\n" + child : "");
+            const child = await renderChildren(block.children, state, prefix + " ".repeat(marker.length));
+            return (prefix + marker + text) + (child ? "\n" + child : "");
         }
         case 22: { // 分割线
             return prefix + "---";

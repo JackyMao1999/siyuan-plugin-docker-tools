@@ -268,8 +268,9 @@ export class FeishuSync {
 
         if (options.addSource) {
             const owner = item.owner ? ` · 所有者：${item.owner}` : "";
+            // 来源直接给出可点击的链接；拿不到链接时退化为 token
             const source = item.url
-                ? `> 来源：[飞书文档](${item.url})${owner}`
+                ? `> 来源：${item.url}${owner}`
                 : `> 来源：飞书文档（token: ${item.objToken}）${owner}`;
             markdown = `${source}\n\n${markdown}`;
         }

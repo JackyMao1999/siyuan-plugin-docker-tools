@@ -101,6 +101,10 @@ export interface FeishuTextElement {
             strikethrough?: boolean;
             underline?: boolean;
             inline_code?: boolean;
+            /** 字体颜色（飞书 FONTCOLOR 枚举 1~7） */
+            text_color?: number;
+            /** 字体背景色（飞书 FONTBACKGROUNDCOLOR 枚举 1~14，1~7 浅色 / 8~14 深色） */
+            background_color?: number;
             link?: { url?: string };
         };
     };
