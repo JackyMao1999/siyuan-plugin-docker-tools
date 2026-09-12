@@ -99,5 +99,8 @@
     "feishuAuthButton": "Open Authorization / Manage",
     "feishuAuthMenu": "Feishu User Authorization",
     "feishuModeTenant": "App (bot) identity",
-    "feishuModeUser": "User identity"
+    "feishuModeUser": "User identity",
+    "feishuFolderToken": "Folder token / link",
+    "feishuFolderTokenPlaceholder": "Empty = My Space; you can also paste a shared space / folder link",
+    "feishuDriveHint": "\"Drive\" source can only list \"My Space\". Feishu \"My Documents Library\" is a separate personal module with no public Open API yet. To sync a shared space or a specific folder, paste its link (or folder token) above."
 }

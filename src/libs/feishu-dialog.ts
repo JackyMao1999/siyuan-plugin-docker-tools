@@ -15,6 +15,15 @@ import { lsNotebooks } from "../api";
 
 type SourceType = "wiki" | "drive";
 
+/** 从链接或纯文本中解析飞书文件夹 token（支持直接粘贴文件夹链接） */
+function extractFolderToken(input: string): string {
+    const text = (input || "").trim();
+    if (!text) return "";
+    const match = /\/(?:drive\/)?folder\/([A-Za-z0-9_-]+)/.exec(text);
+    if (match) return match[1];
+    return text;
+}
+
 interface TreeNodeMeta {
     kind: "space" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file";
     key: string;
@@ -70,6 +79,9 @@ export class FeishuSyncDialog {
     private notebookSelect: HTMLSelectElement;
     private rootPathInput: HTMLInputElement;
     private sourceSelect: HTMLSelectElement;
+    private folderInput: HTMLInputElement;
+    private driveRow: HTMLElement;
+    private driveHintEl: HTMLElement;
     private recursiveInput: HTMLInputElement;
     private assetsInput: HTMLInputElement;
     private incrementalInput: HTMLInputElement;
@@ -100,6 +112,9 @@ export class FeishuSyncDialog {
         this.notebookSelect = root.querySelector("#feishu-notebook") as HTMLSelectElement;
         this.rootPathInput = root.querySelector("#feishu-rootpath") as HTMLInputElement;
         this.sourceSelect = root.querySelector("#feishu-source") as HTMLSelectElement;
+        this.folderInput = root.querySelector("#feishu-folder") as HTMLInputElement;
+        this.driveRow = root.querySelector("#feishu-drive-row") as HTMLElement;
+        this.driveHintEl = root.querySelector("#feishu-drive-hint") as HTMLElement;
         this.recursiveInput = root.querySelector("#feishu-recursive") as HTMLInputElement;
         this.assetsInput = root.querySelector("#feishu-assets") as HTMLInputElement;
         this.incrementalInput = root.querySelector("#feishu-incremental") as HTMLInputElement;
@@ -134,6 +149,11 @@ export class FeishuSyncDialog {
             <span class="feishu-sync__label">${this.t("feishuSpace", "知识空间")}</span>
             <select id="feishu-space" class="b3-select fn__size200"></select>
         </div>
+        <div class="feishu-sync__row" id="feishu-drive-row">
+            <span class="feishu-sync__label">${this.t("feishuFolderToken", "文件夹 token / 链接")}</span>
+            <input id="feishu-folder" class="b3-text-field fn__flex-1" placeholder="${this.t("feishuFolderTokenPlaceholder", "留空 = 我的空间；也可粘贴共享空间 / 文件夹的链接")}">
+        </div>
+        <div class="feishu-sync__hint" id="feishu-drive-hint"></div>
         <div class="feishu-sync__row">
             <span class="feishu-sync__label">${this.t("feishuNotebook", "目标笔记本")}</span>
             <select id="feishu-notebook" class="b3-select fn__size200"></select>
@@ -159,9 +179,15 @@ export class FeishuSyncDialog {
 
     private bindEvents() {
         this.sourceSelect.onchange = () => {
-            this.spaceRow.classList.toggle("fn__none", this.sourceSelect.value !== "wiki");
+            const isWiki = this.sourceSelect.value === "wiki";
+            this.spaceRow.classList.toggle("fn__none", !isWiki);
+            this.driveRow.classList.toggle("fn__none", isWiki);
+            this.driveHintEl.classList.toggle("fn__none", isWiki);
             void this.loadTree();
         };
+        this.folderInput.addEventListener("change", () => {
+            void this.loadTree();
+        });
         (this.dialog.element.querySelector("#feishu-refresh") as HTMLElement).onclick = () => {
             void this.loadTree();
         };
@@ -185,6 +211,15 @@ export class FeishuSyncDialog {
         this.assetsInput.checked = this.options.syncAssets;
         this.incrementalInput.checked = this.options.incremental;
         this.sourceNoteInput.checked = this.options.addSource;
+
+        const isWiki = this.sourceSelect.value === "wiki";
+        this.spaceRow.classList.toggle("fn__none", !isWiki);
+        this.driveRow.classList.toggle("fn__none", isWiki);
+        this.driveHintEl.classList.toggle("fn__none", isWiki);
+        this.driveHintEl.textContent = this.t(
+            "feishuDriveHint",
+            "「云文档」来源只能列出云盘「我的空间」；飞书「我的文档库」是独立的个人模块，开放平台暂无接口可列举。要同步共享空间或指定文件夹，请把它的链接（或 folder token）粘到上面。"
+        );
 
         if (!this.deps.client.isConfigured) {
             this.appendLog("⚠️ 尚未配置飞书的 App ID / App Secret。");
@@ -271,22 +306,41 @@ export class FeishuSyncDialog {
             };
             this.treeEl.appendChild(this.createNodeElement(spaceMeta, 0));
         } else {
+            const folderToken = this.getDriveFolderToken();
             this.setStatus("正在加载云文档目录...");
+            let title = this.t("feishuMySpace", "我的空间");
+            let basePath: string[] = [];
+            if (folderToken) {
+                title = await this.getFolderLabel(folderToken);
+                basePath = [sanitizeTitle(title)];
+            }
             const rootMeta: TreeNodeMeta = {
                 kind: "drive-root",
-                key: "drive:root",
-                title: this.t("feishuMySpace", "我的空间"),
+                key: `drive:${folderToken || "root"}`,
+                title,
                 expandable: true,
-                path: [],
-                loader: async () => this.loadDriveMetas("", []),
+                objToken: folderToken,
+                path: basePath,
+                loader: async () => this.loadDriveMetas(folderToken, basePath),
             };
             this.treeEl.appendChild(this.createNodeElement(rootMeta, 0));
-            if (this.deps.isUserMode && !this.deps.isUserMode()) {
+            if (!folderToken && this.deps.isUserMode && !this.deps.isUserMode()) {
                 this.setStatus("注意：当前为应用身份，「我的空间」是应用自己的空间（通常为空）");
                 return;
             }
         }
         this.setStatus("");
+    }
+
+    /** 从输入内容里解析文件夹 token（支持直接粘贴链接） */
+    private getDriveFolderToken(): string {
+        return extractFolderToken(this.folderInput?.value || "");
+    }
+
+    /** 获取文件夹显示名，失败时退化为 token 前缀 */
+    private async getFolderLabel(token: string): Promise<string> {
+        const meta = await this.deps.client.getFolderMeta(token);
+        return meta?.name || `指定文件夹（${token.slice(0, 10)}…）`;
     }
 
     private async loadWikiNodeMetas(spaceId: string, parentToken: string | undefined, path: string[]): Promise<TreeNodeMeta[]> {
@@ -530,7 +584,7 @@ export class FeishuSyncDialog {
                             );
                         }
                     } else if (meta.kind === "drive-root") {
-                        await collectDrive("", []);
+                        await collectDrive(meta.objToken || "", meta.path || []);
                     } else if (meta.kind === "drive-folder") {
                         await collectDrive(
                             meta.objToken,

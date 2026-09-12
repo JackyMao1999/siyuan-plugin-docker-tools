@@ -99,5 +99,8 @@
     "feishuAuthButton": "打开授权 / 授权管理",
     "feishuAuthMenu": "飞书用户授权",
     "feishuModeTenant": "应用（机器人）身份",
-    "feishuModeUser": "用户身份"
+    "feishuModeUser": "用户身份",
+    "feishuFolderToken": "文件夹 token / 链接",
+    "feishuFolderTokenPlaceholder": "留空 = 我的空间；也可粘贴共享空间 / 文件夹的链接",
+    "feishuDriveHint": "「云文档」来源只能列出云盘「我的空间」；飞书「我的文档库」是独立的个人模块，开放平台暂无接口可列举。要同步共享空间或指定文件夹，请把它的链接（或 folder token）粘到上面。"
 }

@@ -28,6 +28,15 @@ same value as configured in the Feishu app console (Security Settings → Redire
 `Open Authorization / Manage` → authorize in the browser → paste the full callback URL back into the
 dialog → `Finish`. See the built-in **Help** (search "user identity") for details.
 
+### What can be listed (Open API limits)
+
+| Location | Supported | Notes |
+| --- | --- | --- |
+| Drive · "My Space" | ✅ | Default of the "Drive" source, including subfolders |
+| Wiki knowledge base | ✅ | Switch the source to "Feishu Wiki" |
+| Shared space / specific folder | ⚠️ Manual | There is no "list all shared spaces" API; paste the folder link or `folder_token` into "Folder token / link" |
+| "My Documents Library" | ❌ | Personal page-tree module (beta), a separate module from "My Space"; no public Open API |
+
 ### Setup
 
 1. Create a "Custom App" on the [Feishu Open Platform](https://open.feishu.cn/app) and get the **App ID** / **App Secret**.

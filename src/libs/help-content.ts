@@ -114,8 +114,30 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 勾选「知识空间」或「文件夹」= 同步整个目录；也可以只勾选某一个文档。已同步过的文档会<b>原地更新</b>，不会重复创建。</p>`,
         },
         {
+            id: "spaces",
+            title: "⑦ 为什么「云文档」里只有我的空间？文档库 / 共享空间怎么办",
+            keywords: "我的空间 共享空间 文档库 我的文档库 知识库 看不到 文件夹 token 列举 限制 folder_token 链接",
+            html: `
+<p>飞书的云文档分成几个<b>互相独立</b>的位置，而开放平台接口能覆盖的范围并不一样：</p>
+<table class="plugin-help__table">
+<thead><tr><th>位置</th><th>插件能否列出</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>云盘 ·「我的空间」</td><td>✅ 可以</td><td>「云文档」来源默认就是它，含子文件夹</td></tr>
+<tr><td>知识库（Wiki）</td><td>✅ 可以</td><td>请把来源切换为「飞书知识库（Wiki）」</td></tr>
+<tr><td>共享空间 / 指定文件夹</td><td>⚠️ 需手动指定</td><td>没有「列出全部共享空间」的接口；但拿到 <code>folder_token</code> 就能浏览</td></tr>
+<tr><td>「我的文档库」</td><td>❌ 暂无接口</td><td>个人页面树模块，官方标为内测；与「我的空间」是两个独立模块</td></tr>
+</tbody>
+</table>
+<p><b>想同步共享空间 / 某个文件夹？</b>在浏览器里打开该文件夹，复制地址栏里的链接
+（形如 <code>https://xxx.feishu.cn/drive/folder/fldcnxxxxxxxx</code>），粘贴到同步对话框的
+<b>「文件夹 token / 链接」</b>输入框，回车即可浏览并同步。</p>
+<p><b>想同步部门/团队的资料？</b>这类内容通常放在<b>知识库</b>里，请把来源切换为「飞书知识库（Wiki）」，
+它可以直接列出你有权限的所有知识空间。</p>
+<p>⚠️ 注意：「我的文档库」里的内容不会出现在「我的空间」中，因此当前无法通过开放平台接口读取。</p>`,
+        },
+        {
             id: "faq",
-            title: "⑦ 常见问题排查",
+            title: "⑧ 常见问题排查",
             keywords: "失败 报错 报错 排查 401 权限 未配置 看不到 空 图片 不同步 旧版 doc 纯文本 安全 隐私 第三方 域名 换应用",
             html: `
 <dl class="plugin-help__faq">

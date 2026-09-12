@@ -353,7 +353,19 @@ export class FeishuClient {
         return data?.node || null;
     }
 
-    /** 获取某个文件夹下的文件列表（自动翻页），folderToken 为空时表示根目录 */
+    /** 获取文件夹元信息（名称等），失败返回 null */
+    async getFolderMeta(folderToken: string): Promise<{ name?: string; token?: string } | null> {
+        if (!folderToken) return null;
+        try {
+            const data = await this.request(`/open-apis/drive/explorer/v2/folder/${encodeURIComponent(folderToken)}/meta`);
+            return data || null;
+        } catch (e) {
+            console.warn("获取飞书文件夹信息失败:", e);
+            return null;
+        }
+    }
+
+    /** 获取某个文件夹下的文件列表（自动翻页），folderToken 为空时表示「我的空间」根目录 */
     async listDriveFiles(folderToken: string): Promise<FeishuDriveFile[]> {
         const result: FeishuDriveFile[] = [];
         let pageToken = "";
