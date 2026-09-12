@@ -87,5 +87,17 @@
     "helpNoResult": "No matching content, try another keyword",
     "helpCopy": "Copy",
     "helpCopied": "Copied to clipboard",
-    "helpCopyFailed": "Copy failed, please copy manually"
+    "helpCopyFailed": "Copy failed, please copy manually",
+    "feishuAuthMode": "Feishu Identity",
+    "feishuAuthModeDesc": "App identity can only access content shared with the app; user identity can access your own Drive and Wiki (requires authorization first)",
+    "feishuAuthModeTenant": "App (bot) identity",
+    "feishuAuthModeUser": "User identity (access My Space)",
+    "feishuRedirectUri": "OAuth Redirect URL",
+    "feishuRedirectUriDesc": "Must exactly match the redirect URL configured in the Feishu app console (Security Settings)",
+    "feishuAuthTitle": "Feishu User Authorization",
+    "feishuAuthDesc": "When using user identity, complete authorization once to obtain user_access_token",
+    "feishuAuthButton": "Open Authorization / Manage",
+    "feishuAuthMenu": "Feishu User Authorization",
+    "feishuModeTenant": "App (bot) identity",
+    "feishuModeUser": "User identity"
 }

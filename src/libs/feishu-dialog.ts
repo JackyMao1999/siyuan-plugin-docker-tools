@@ -47,6 +47,12 @@ export interface FeishuSyncDialogDeps {
     getOptions: () => FeishuSyncOptions;
     saveOptions: (options: FeishuSyncOptions) => Promise<void>;
     openSetting: () => void;
+    /** 当前访问身份描述，例如「应用（机器人）身份」 */
+    identityLabel?: () => string;
+    /** 是否使用用户身份 */
+    isUserMode?: () => boolean;
+    /** 打开用户授权对话框 */
+    openAuth?: () => void;
 }
 
 /** 当前是否处于同步中 */
@@ -144,6 +150,8 @@ export class FeishuSyncDialog {
     <div class="feishu-sync__tree" id="feishu-tree"></div>
     <div class="feishu-sync__log" id="feishu-log"></div>
     <div class="feishu-sync__footer">
+        <button id="feishu-auth-btn" class="b3-button b3-button--outline">${this.t("feishuAuthMenu", "用户授权")}</button>
+        <span class="fn__space"></span>
         <button id="feishu-sync-btn" class="b3-button b3-button--text">${this.t("feishuStartSync", "开始同步")}</button>
     </div>
 </div>`;
@@ -163,6 +171,9 @@ export class FeishuSyncDialog {
         this.syncBtn.onclick = () => {
             void this.handleSync();
         };
+        (this.dialog.element.querySelector("#feishu-auth-btn") as HTMLElement).onclick = () => {
+            this.deps.openAuth?.();
+        };
         this.recursiveInput.onchange = () => this.collectOptions();
         this.assetsInput.onchange = () => this.collectOptions();
         this.incrementalInput.onchange = () => this.collectOptions();
@@ -180,6 +191,14 @@ export class FeishuSyncDialog {
             this.appendLog("请打开插件设置填写；不确定怎么配置，可在设置中点击「打开帮助 / 配置向导」查看分步说明。");
             this.syncBtn.disabled = true;
             return;
+        }
+
+        const identity = this.deps.identityLabel?.();
+        if (identity) {
+            this.appendLog(`当前飞书访问身份：${identity}`);
+        }
+        if (this.deps.isUserMode && !this.deps.isUserMode()) {
+            this.appendLog("提示：「应用（机器人）身份」只能看到被授权给应用的内容；若要访问你自己的云文档/知识库，请在设置中改为「用户身份」并完成授权。");
         }
 
         await Promise.all([this.loadNotebooks(), this.loadSpaces()]);
@@ -262,6 +281,10 @@ export class FeishuSyncDialog {
                 loader: async () => this.loadDriveMetas("", []),
             };
             this.treeEl.appendChild(this.createNodeElement(rootMeta, 0));
+            if (this.deps.isUserMode && !this.deps.isUserMode()) {
+                this.setStatus("注意：当前为应用身份，「我的空间」是应用自己的空间（通常为空）");
+                return;
+            }
         }
         this.setStatus("");
     }

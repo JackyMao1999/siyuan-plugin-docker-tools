@@ -16,6 +16,18 @@ Import documents from Feishu Wiki / Feishu Drive into SiYuan as native documents
 - **Asset localization**: download images/attachments and store them in the SiYuan asset folder.
 - Choose the target notebook and root path; already-synced documents are updated in place instead of duplicated.
 
+### Identity: app vs user
+
+| Identity | What you can see | Notes |
+| --- | --- | --- |
+| **App (bot) identity** (default) | Only Wiki/docs **shared with the app** | Drive "My Space" belongs to the app and is usually empty |
+| **User identity** (recommended) | **Your own** Drive files and the Wikis you can access | Requires a one-time OAuth authorization |
+
+To switch: Settings → `Feishu Identity` = User identity, set `OAuth Redirect URL` to exactly the
+same value as configured in the Feishu app console (Security Settings → Redirect URL), then click
+`Open Authorization / Manage` → authorize in the browser → paste the full callback URL back into the
+dialog → `Finish`. See the built-in **Help** (search "user identity") for details.
+
 ### Setup
 
 1. Create a "Custom App" on the [Feishu Open Platform](https://open.feishu.cn/app) and get the **App ID** / **App Secret**.

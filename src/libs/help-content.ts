@@ -141,6 +141,37 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <dd>目前仅支持单向：飞书 → 思源。</dd>
 </dl>`,
         },
+        {
+            id: "user-identity",
+            title: "★ 想同步「我自己的」空间？改用用户身份授权",
+            keywords: "用户身份 用户授权 user_access_token oauth 授权 我的空间 空的 机器人 重定向 redirect_uri 20027 invalid_grant 重新授权",
+            html: `
+<p><b>为什么「我的空间」是空的？</b>默认使用 <b>应用（机器人）身份</b>，
+此时云文档的「我的空间」是<b>应用自己</b>的空间（通常为空），知识库也只能看到被邀请加入的空间。</p>
+<p>要读取<b>你自己</b>的云文档和你有权限的知识库，需要切换到 <b>用户身份</b>（OAuth 授权）：</p>
+<ol>
+<li>飞书开发者后台 → 你的应用 → <b>安全设置</b> → <b>重定向 URL</b>，添加一个地址，例如
+<code>http://localhost:8080/feishu-callback</code>（这个地址不需要真的能打开）。</li>
+<li>确认应用已申请 <code>wiki:wiki:readonly</code>、<code>docx:document:readonly</code>、<code>drive:drive:readonly</code>
+权限并已发布版本（用户授权同样需要这些权限）。</li>
+<li>思源插件设置中：<b>飞书访问身份</b> 改为「用户身份」；
+<b>授权回调地址</b> 填第 1 步配置的那个地址（必须<b>完全一致</b>）。</li>
+<li>点击设置中的 <b>打开授权 / 授权管理</b> → 点「① 打开授权页面」在浏览器登录并同意授权。</li>
+<li>授权后浏览器会跳转到一个打不开的页面（正常现象），复制<b>地址栏里的完整网址</b>（含 <code>code=</code>），
+粘贴回对话框 → 点「③ 完成授权」。</li>
+</ol>
+<p>授权成功后，同步对话框顶部会显示「用户身份（你的名字）」，此时「我的空间」就是你自己的云文档了。</p>
+<dl class="plugin-help__faq">
+<dt>报错 20027</dt>
+<dd>授权链接里包含了应用「没有申请」的权限。请在飞书后台补齐权限，或减少授权范围后重试。</dd>
+<dt>报错 invalid_grant / 授权码无效</dt>
+<dd>授权码有效期只有 5 分钟且只能用一次，请重新点「打开授权页面」再走一遍。</dd>
+<dt>登录后提示重定向地址不匹配</dt>
+<dd>「授权回调地址」必须和飞书后台「安全设置 → 重定向 URL」里的地址逐字符一致（含 http/https、端口、路径）。</dd>
+<dt>换了应用或授权过期</dt>
+<dd>更换 App ID 后需要重新授权；授权过期会自动用 refresh_token 续期，续期失败时重新走一次授权即可。</dd>
+</dl>`,
+        },
     ];
 }
 

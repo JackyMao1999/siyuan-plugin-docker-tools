@@ -87,5 +87,17 @@
     "helpNoResult": "没有找到相关内容，换个关键词试试",
     "helpCopy": "复制",
     "helpCopied": "已复制到剪贴板",
-    "helpCopyFailed": "复制失败，请手动选择复制"
+    "helpCopyFailed": "复制失败，请手动选择复制",
+    "feishuAuthMode": "飞书访问身份",
+    "feishuAuthModeDesc": "应用身份只能看到被授权给应用的内容；用户身份可访问你自己的云文档与知识库（需先完成一次授权）",
+    "feishuAuthModeTenant": "应用（机器人）身份",
+    "feishuAuthModeUser": "用户身份（可访问我的空间）",
+    "feishuRedirectUri": "授权回调地址",
+    "feishuRedirectUriDesc": "需与飞书开发者后台「安全设置 → 重定向 URL」中配置的地址完全一致",
+    "feishuAuthTitle": "飞书用户授权",
+    "feishuAuthDesc": "选择用户身份后，需要先完成一次授权以获取 user_access_token",
+    "feishuAuthButton": "打开授权 / 授权管理",
+    "feishuAuthMenu": "飞书用户授权",
+    "feishuModeTenant": "应用（机器人）身份",
+    "feishuModeUser": "用户身份"
 }

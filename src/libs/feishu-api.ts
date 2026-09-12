@@ -46,10 +46,19 @@ interface ProxyOptions {
     timeout?: number;
 }
 
+/** 访问身份：tenant = 应用（机器人）身份；user = 用户身份（可访问自己的空间） */
+export type FeishuAuthMode = "tenant" | "user";
+
+/** 用户令牌提供者（由 FeishuAuth 实现） */
+export interface UserTokenProvider {
+    ensureAccessToken(domain: string, appId: string, appSecret: string): Promise<string>;
+}
+
 export interface FeishuCredentials {
     domain: string;
     appId: string;
     appSecret: string;
+    authMode?: FeishuAuthMode;
 }
 
 export interface FeishuWikiSpace {
@@ -113,7 +122,7 @@ export interface FeishuBlock {
 /**
  * 通过思源内核转发一个 HTTP 请求
  */
-async function forwardProxy(url: string, opts: ProxyOptions): Promise<ProxyResponse> {
+export async function forwardProxy(url: string, opts: ProxyOptions): Promise<ProxyResponse> {
     const headerList = Object.entries(opts.headers || {}).map(([k, v]) => ({ [k]: v }));
     const request: any = {
         url,
@@ -148,7 +157,7 @@ async function forwardProxy(url: string, opts: ProxyOptions): Promise<ProxyRespo
 /**
  * 解析响应体为 JSON 对象；非 JSON 时给出可读的错误信息
  */
-function parseJsonBody(resp: ProxyResponse, url: string): any {
+export function parseJsonBody(resp: ProxyResponse, url: string): any {
     const text = typeof resp.body === "string" ? resp.body.trim() : "";
     if (!text) {
         throw new Error(`飞书接口返回空响应 (HTTP ${resp.status || "未知"})`);
@@ -169,6 +178,8 @@ export class FeishuClient {
     private domain: string;
     private appId: string;
     private appSecret: string;
+    private authMode: FeishuAuthMode = "tenant";
+    private userAuth?: UserTokenProvider;
     private token = "";
     private tokenExpire = 0;
 
@@ -181,10 +192,20 @@ export class FeishuClient {
         this.domain = (credentials.domain || FEISHU_DOMAIN_CN).replace(/\/+$/, "");
         this.appId = (credentials.appId || "").trim();
         this.appSecret = (credentials.appSecret || "").trim();
+        this.authMode = credentials.authMode === "user" ? "user" : "tenant";
         if (changed) {
             this.token = "";
             this.tokenExpire = 0;
         }
+    }
+
+    /** 注入用户令牌提供者 */
+    setUserTokenProvider(provider: UserTokenProvider) {
+        this.userAuth = provider;
+    }
+
+    get currentAuthMode(): FeishuAuthMode {
+        return this.authMode;
     }
 
     get isConfigured(): boolean {
@@ -192,6 +213,16 @@ export class FeishuClient {
     }
 
     private async ensureToken(force = false): Promise<string> {
+        if (this.authMode === "user") {
+            if (!this.userAuth) {
+                throw new Error("用户授权模块未初始化");
+            }
+            if (!this.isConfigured) {
+                throw new Error("请先在插件设置中填写飞书应用的 App ID 与 App Secret");
+            }
+            return await this.userAuth.ensureAccessToken(this.domain, this.appId, this.appSecret);
+        }
+
         const now = Date.now();
         if (!force && this.token && now < this.tokenExpire) {
             return this.token;
@@ -273,6 +304,17 @@ export class FeishuClient {
     /** 测试凭据是否可用 */
     async testConnection(): Promise<void> {
         await this.ensureToken(true);
+    }
+
+    /** 获取当前授权用户信息（需用户身份） */
+    async getUserInfo(): Promise<any> {
+        const data = await this.request("/open-apis/authen/v1/user_info");
+        return data;
+    }
+
+    /** 授权域名（飞书 / Lark） */
+    static accountsDomain(domain: string): string {
+        return (domain || "").includes("larksuite") ? "https://accounts.larksuite.com" : "https://accounts.feishu.cn";
     }
 
     /** 获取知识空间列表（自动翻页） */
