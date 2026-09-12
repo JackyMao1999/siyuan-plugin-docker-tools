@@ -119,6 +119,23 @@ export interface FeishuBlock {
     [key: string]: any;
 }
 
+/** 搜索云文档的结果项 */
+export interface FeishuSearchResult {
+    title: string;
+    token: string;
+    /** DOCX / DOC / WIKI / SHEET / BITABLE / MINDNOTE / FILE / SLIDES / SHORTCUT ... */
+    docType: string;
+    /** DOC = 文档实体；WIKI = 知识库节点 */
+    entityType: string;
+    url?: string;
+    updateTime?: number;
+    ownerName?: string;
+}
+
+function stripHtmlTags(text: string): string {
+    return (text || "").replace(/<[^>]*>/g, "");
+}
+
 /**
  * 通过思源内核转发一个 HTTP 请求
  */
@@ -351,6 +368,50 @@ export class FeishuClient {
             query: { token: nodeToken, obj_type: "wiki" },
         });
         return data?.node || null;
+    }
+
+    /**
+     * 搜索当前身份有权限的云文档
+     * 接口支持 tenant_access_token（应用身份）与 user_access_token（用户身份）
+     * 需要应用开通 search:docs:read 权限
+     */
+    async searchDocs(query: string, pageToken?: string, pageSize = 20): Promise<{
+        items: FeishuSearchResult[];
+        hasMore: boolean;
+        pageToken: string;
+        total: number;
+    }> {
+        const docTypes = ["DOC", "DOCX", "SHEET", "BITABLE", "MINDNOTE", "FILE", "SLIDES", "SHORTCUT"];
+        const data = await this.request("/open-apis/search/v2/doc_wiki/search", {
+            method: "POST",
+            body: {
+                query,
+                doc_filter: { doc_types: docTypes },
+                wiki_filter: { doc_types: docTypes },
+                page_size: Math.min(20, Math.max(1, pageSize)),
+                page_token: pageToken,
+            },
+        });
+        const items: FeishuSearchResult[] = (data?.res_units || [])
+            .map((unit: any) => {
+                const meta = unit?.result_meta || {};
+                return {
+                    title: stripHtmlTags(unit?.title_highlighted || ""),
+                    token: meta.token || "",
+                    docType: (meta.doc_types || "").toUpperCase(),
+                    entityType: (unit?.entity_type || "DOC").toUpperCase(),
+                    url: meta.url,
+                    updateTime: meta.update_time,
+                    ownerName: meta.owner_name,
+                } as FeishuSearchResult;
+            })
+            .filter((item: FeishuSearchResult) => !!item.token);
+        return {
+            items,
+            hasMore: !!data?.has_more,
+            pageToken: data?.page_token || "",
+            total: data?.total || 0,
+        };
     }
 
     /** 获取文件夹元信息（名称等），失败返回 null */

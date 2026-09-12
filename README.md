@@ -33,7 +33,8 @@ dialog → `Finish`. See the built-in **Help** (search "user identity") for deta
 | Location | Supported | Notes |
 | --- | --- | --- |
 | Drive · "My Space" | ✅ | Default of the "Drive" source, including subfolders |
-| Wiki knowledge base | ✅ | Switch the source to "Feishu Wiki" |
+| Wiki knowledge base | ✅ | Switch the source to "Feishu Wiki" — lists all spaces the identity has joined |
+| Documents anywhere | ✅ keyword search | Source "Search accessible docs"; requires the `search:docs:read` scope |
 | Shared space / specific folder | ⚠️ Manual | There is no "list all shared spaces" API; paste the folder link or `folder_token` into "Folder token / link" |
 | "My Documents Library" | ❌ | Personal page-tree module (beta), a separate module from "My Space"; no public Open API |
 

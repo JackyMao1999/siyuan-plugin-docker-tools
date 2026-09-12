@@ -102,5 +102,13 @@
     "feishuModeUser": "User identity",
     "feishuFolderToken": "Folder token / link",
     "feishuFolderTokenPlaceholder": "Empty = My Space; you can also paste a shared space / folder link",
-    "feishuDriveHint": "\"Drive\" source can only list \"My Space\". Feishu \"My Documents Library\" is a separate personal module with no public Open API yet. To sync a shared space or a specific folder, paste its link (or folder token) above."
+    "feishuDriveHint": "\"Drive\" source can only list \"My Space\". Feishu \"My Documents Library\" is a separate personal module with no public Open API yet. To sync a shared space or a specific folder, paste its link (or folder token) above.",
+    "feishuSourceSearch": "Search accessible docs",
+    "feishuSearchLabel": "Keyword",
+    "feishuSearchPlaceholder": "Search documents your identity can access (max 30 chars)",
+    "feishuSearchBtn": "Search",
+    "feishuSearchHint": "Search by keyword across documents the current identity can access (app identity = docs visible to the app). Requires the search:docs:read scope.",
+    "feishuSearchNeedKeyword": "Please enter a keyword",
+    "feishuSearchSearching": "Searching...",
+    "feishuSearchEmpty": "No documents found (the app may lack the search:docs:read scope)"
 }

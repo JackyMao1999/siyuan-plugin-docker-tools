@@ -13,7 +13,7 @@ import {
 } from "./feishu-sync";
 import { lsNotebooks } from "../api";
 
-type SourceType = "wiki" | "drive";
+type SourceType = "wiki" | "drive" | "search";
 
 /** 从链接或纯文本中解析飞书文件夹 token（支持直接粘贴文件夹链接） */
 function extractFolderToken(input: string): string {
@@ -25,7 +25,7 @@ function extractFolderToken(input: string): string {
 }
 
 interface TreeNodeMeta {
-    kind: "space" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file";
+    kind: "space" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file" | "search-doc";
     key: string;
     title: string;
     /** wiki 空间 ID */
@@ -43,6 +43,8 @@ interface TreeNodeMeta {
     objType?: string;
     editTime?: string;
     url?: string;
+    /** 列表上显示的额外标签（如文档类型） */
+    badge?: string;
     /** 目标目录层级 */
     path: string[];
     /** 子节点加载器 */
@@ -82,6 +84,10 @@ export class FeishuSyncDialog {
     private folderInput: HTMLInputElement;
     private driveRow: HTMLElement;
     private driveHintEl: HTMLElement;
+    private searchInput: HTMLInputElement;
+    private searchBtn: HTMLButtonElement;
+    private searchRow: HTMLElement;
+    private searchHintEl: HTMLElement;
     private recursiveInput: HTMLInputElement;
     private assetsInput: HTMLInputElement;
     private incrementalInput: HTMLInputElement;
@@ -115,6 +121,10 @@ export class FeishuSyncDialog {
         this.folderInput = root.querySelector("#feishu-folder") as HTMLInputElement;
         this.driveRow = root.querySelector("#feishu-drive-row") as HTMLElement;
         this.driveHintEl = root.querySelector("#feishu-drive-hint") as HTMLElement;
+        this.searchInput = root.querySelector("#feishu-search") as HTMLInputElement;
+        this.searchBtn = root.querySelector("#feishu-search-btn") as HTMLButtonElement;
+        this.searchRow = root.querySelector("#feishu-search-row") as HTMLElement;
+        this.searchHintEl = root.querySelector("#feishu-search-hint") as HTMLElement;
         this.recursiveInput = root.querySelector("#feishu-recursive") as HTMLInputElement;
         this.assetsInput = root.querySelector("#feishu-assets") as HTMLInputElement;
         this.incrementalInput = root.querySelector("#feishu-incremental") as HTMLInputElement;
@@ -140,6 +150,7 @@ export class FeishuSyncDialog {
             <select id="feishu-source" class="b3-select fn__size200">
                 <option value="wiki">${this.t("feishuSourceWiki", "飞书知识库（Wiki）")}</option>
                 <option value="drive">${this.t("feishuSourceDrive", "飞书云文档（文件夹）")}</option>
+                <option value="search">${this.t("feishuSourceSearch", "搜索有权限的文档")}</option>
             </select>
             <button id="feishu-refresh" class="b3-button b3-button--outline fn__flex-center">${this.t("feishuRefresh", "刷新")}</button>
             <span class="fn__space"></span>
@@ -154,6 +165,12 @@ export class FeishuSyncDialog {
             <input id="feishu-folder" class="b3-text-field fn__flex-1" placeholder="${this.t("feishuFolderTokenPlaceholder", "留空 = 我的空间；也可粘贴共享空间 / 文件夹的链接")}">
         </div>
         <div class="feishu-sync__hint" id="feishu-drive-hint"></div>
+        <div class="feishu-sync__row" id="feishu-search-row">
+            <span class="feishu-sync__label">${this.t("feishuSearchLabel", "关键词")}</span>
+            <input id="feishu-search" class="b3-text-field fn__flex-1" placeholder="${this.t("feishuSearchPlaceholder", "输入关键词搜索有权限的文档（最多 30 字）")}">
+            <button id="feishu-search-btn" class="b3-button b3-button--outline">${this.t("feishuSearchBtn", "搜索")}</button>
+        </div>
+        <div class="feishu-sync__hint" id="feishu-search-hint"></div>
         <div class="feishu-sync__row">
             <span class="feishu-sync__label">${this.t("feishuNotebook", "目标笔记本")}</span>
             <select id="feishu-notebook" class="b3-select fn__size200"></select>
@@ -179,14 +196,20 @@ export class FeishuSyncDialog {
 
     private bindEvents() {
         this.sourceSelect.onchange = () => {
-            const isWiki = this.sourceSelect.value === "wiki";
-            this.spaceRow.classList.toggle("fn__none", !isWiki);
-            this.driveRow.classList.toggle("fn__none", isWiki);
-            this.driveHintEl.classList.toggle("fn__none", isWiki);
+            this.updateRowVisibility();
             void this.loadTree();
         };
         this.folderInput.addEventListener("change", () => {
             void this.loadTree();
+        });
+        this.searchBtn.onclick = () => {
+            void this.loadTree();
+        };
+        this.searchInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                void this.loadTree();
+            }
         });
         (this.dialog.element.querySelector("#feishu-refresh") as HTMLElement).onclick = () => {
             void this.loadTree();
@@ -212,14 +235,15 @@ export class FeishuSyncDialog {
         this.incrementalInput.checked = this.options.incremental;
         this.sourceNoteInput.checked = this.options.addSource;
 
-        const isWiki = this.sourceSelect.value === "wiki";
-        this.spaceRow.classList.toggle("fn__none", !isWiki);
-        this.driveRow.classList.toggle("fn__none", isWiki);
-        this.driveHintEl.classList.toggle("fn__none", isWiki);
         this.driveHintEl.textContent = this.t(
             "feishuDriveHint",
             "「云文档」来源只能列出云盘「我的空间」；飞书「我的文档库」是独立的个人模块，开放平台暂无接口可列举。要同步共享空间或指定文件夹，请把它的链接（或 folder token）粘到上面。"
         );
+        this.searchHintEl.textContent = this.t(
+            "feishuSearchHint",
+            "按关键词搜索「当前身份有权限」的文档：应用身份=应用可见的文档，用户身份=你能看到的文档。需要应用开通 search:docs:read 权限。"
+        );
+        this.updateRowVisibility();
 
         if (!this.deps.client.isConfigured) {
             this.appendLog("⚠️ 尚未配置飞书的 App ID / App Secret。");
@@ -287,9 +311,26 @@ export class FeishuSyncDialog {
         }
     }
 
+    /** 按当前来源显示/隐藏对应的配置行 */
+    private updateRowVisibility() {
+        const source = this.sourceSelect.value as SourceType;
+        const isWiki = source === "wiki";
+        const isDrive = source === "drive";
+        const isSearch = source === "search";
+        this.spaceRow.classList.toggle("fn__none", !isWiki);
+        this.driveRow.classList.toggle("fn__none", !isDrive);
+        this.driveHintEl.classList.toggle("fn__none", !isDrive);
+        this.searchRow.classList.toggle("fn__none", !isSearch);
+        this.searchHintEl.classList.toggle("fn__none", !isSearch);
+    }
+
     private async loadTree() {
         this.treeEl.innerHTML = "";
         const source = this.sourceSelect.value as SourceType;
+        if (source === "search") {
+            await this.loadSearchResults();
+            return;
+        }
         if (source === "wiki") {
             const spaceId = this.spaceSelect.value;
             const spaceName = this.spaceSelect.selectedOptions[0]?.textContent || "知识库";
@@ -330,6 +371,82 @@ export class FeishuSyncDialog {
             }
         }
         this.setStatus("");
+    }
+
+    /** 搜索当前身份有权限的文档并展示结果 */
+    private async loadSearchResults() {
+        const keyword = (this.searchInput.value || "").trim();
+        if (!keyword) {
+            this.setStatus(this.t("feishuSearchNeedKeyword", "请输入搜索关键词"));
+            return;
+        }
+        if (keyword.length > 30) {
+            this.appendLog("关键词最长 30 个字符，已自动截取前 30 个字符。");
+        }
+        const query = keyword.slice(0, 30);
+        this.setStatus(this.t("feishuSearchSearching", "搜索中..."));
+        try {
+            const result = await this.deps.client.searchDocs(query);
+            if (!result.items.length) {
+                this.appendLog(this.t("feishuSearchEmpty", "没有搜索到文档（也可能是应用缺少 search:docs:read 权限）"));
+                return;
+            }
+            this.appendLog(`搜索到 ${result.total || result.items.length} 个文档，当前展示 ${result.items.length} 个。`);
+            for (const item of result.items) {
+                const syncable = item.docType === "DOCX" || item.docType === "DOC" || item.entityType === "WIKI";
+                const meta: TreeNodeMeta = {
+                    kind: "search-doc",
+                    key: `search:${item.token}`,
+                    title: item.title || item.token,
+                    syncable,
+                    objToken: item.token,
+                    objType: (item.docType || "").toLowerCase(),
+                    url: item.url,
+                    badge: item.docType || item.entityType,
+                    path: [],
+                };
+                this.treeEl.appendChild(this.createNodeElement(meta, 0));
+            }
+        } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            this.appendLog(`搜索失败：${message}`);
+            this.appendLog("若为权限错误，请在飞书后台为应用开通 search:docs:read 权限后重试。");
+        } finally {
+            this.setStatus("");
+        }
+    }
+
+    /** 把搜索结果解析为可同步的条目 */
+    private async resolveSearchResult(meta: TreeNodeMeta): Promise<FeishuSyncItem | null> {
+        const objToken = meta.objToken || "";
+        const objType = (meta.objType || "").toLowerCase();
+        if (objType === "wiki") {
+            const node = await this.deps.client.getWikiNode(objToken);
+            if (!node || (node.obj_type !== "docx" && node.obj_type !== "doc")) {
+                this.appendLog(`跳过《${meta.title}》：知识库节点类型「${node?.obj_type || "未知"}」暂不支持`);
+                return null;
+            }
+            return {
+                key: `wiki:${node.node_token}`,
+                objToken: node.obj_token,
+                objType: node.obj_type,
+                title: node.title || meta.title,
+                editTime: node.obj_edit_time,
+                path: [],
+            };
+        }
+        if (objType !== "docx" && objType !== "doc") {
+            this.appendLog(`跳过《${meta.title}》：类型「${objType || "未知"}」暂不支持`);
+            return null;
+        }
+        return {
+            key: `drive:${objToken}`,
+            objToken,
+            objType,
+            title: meta.title,
+            path: [],
+            url: meta.url,
+        };
     }
 
     /** 从输入内容里解析文件夹 token（支持直接粘贴链接） */
@@ -432,6 +549,13 @@ export class FeishuSyncDialog {
         title.className = "feishu-sync__node-title";
         title.textContent = meta.title;
         node.appendChild(title);
+
+        if (meta.badge) {
+            const typeBadge = document.createElement("span");
+            typeBadge.className = "feishu-sync__badge";
+            typeBadge.textContent = meta.badge;
+            node.appendChild(typeBadge);
+        }
 
         if (!meta.syncable && !meta.expandable) {
             const badge = document.createElement("span");
@@ -599,6 +723,9 @@ export class FeishuSyncDialog {
                             path: basePath,
                             url: meta.url,
                         });
+                    } else if (meta.kind === "search-doc" && meta.syncable) {
+                        const item = await this.resolveSearchResult(meta);
+                        if (item) push(item);
                     }
                 }
                 // 继续遍历已加载的子节点，以便收集被单独勾选的深层文档（重复项由 seen 去重）

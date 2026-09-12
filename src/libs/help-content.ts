@@ -9,6 +9,7 @@ const FEISHU_SCOPES = [
     "docx:document:readonly",
     "drive:drive:readonly",
     "docs:document:readonly",
+    "search:docs:read",
 ].join("\n");
 
 const LINK_STYLE = 'style="color:var(--b3-theme-primary);text-decoration:underline;"';
@@ -61,8 +62,10 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <tr><td><code>docx:document:readonly</code></td><td>✅ 必需</td><td>读取新版文档（docx）的正文内容</td></tr>
 <tr><td><code>drive:drive:readonly</code></td><td>✅ 必需</td><td>浏览云文档文件夹、下载文档中的图片与附件</td></tr>
 <tr><td><code>docs:document.content:read</code></td><td>⭕ 可选</td><td>同步旧版文档（只能取纯文本）</td></tr>
+<tr><td><code>search:docs:read</code></td><td>⭕ 推荐</td><td>按关键词搜索有权限的文档（应用/机器人身份也能用）</td></tr>
 </tbody>
 </table>
+<p>💡 只想同步「应用被授权的内容」时，<b>不需要</b>额外配置：来源选「搜索有权限的文档」即可用关键词搜出来（依赖 <code>search:docs:read</code>）。</p>
 <p><b>开通后一定要发布版本</b>：左侧 <b>版本管理与发布</b> → 创建版本 → 申请发布。（若企业开启了应用管控，需要管理员审核通过。）</p>
 <pre class="plugin-help__copy-src">${FEISHU_SCOPES}</pre>
 <button class="b3-button b3-button--outline plugin-help__copy">复制权限清单</button>`,
@@ -101,7 +104,7 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <table class="plugin-help__table">
 <thead><tr><th>选项</th><th>说明</th></tr></thead>
 <tbody>
-<tr><td>同步来源</td><td>「飞书知识库（Wiki）」按知识空间同步；「飞书云文档」按文件夹同步</td></tr>
+<tr><td>同步来源</td><td>「飞书知识库（Wiki）」按知识空间同步；「飞书云文档」按文件夹同步；「搜索有权限的文档」按关键词搜索后勾选同步</td></tr>
 <tr><td>知识空间</td><td>选择要同步的知识库（只在 Wiki 来源下显示）</td></tr>
 <tr><td>目标笔记本 / 根路径</td><td>同步到哪个笔记本、放在该笔记本下的哪个目录</td></tr>
 <tr><td>递归子文档</td><td>勾选后连同下级子文档一起同步，并保留层级结构</td></tr>
@@ -124,10 +127,16 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <tbody>
 <tr><td>云盘 ·「我的空间」</td><td>✅ 可以</td><td>「云文档」来源默认就是它，含子文件夹</td></tr>
 <tr><td>知识库（Wiki）</td><td>✅ 可以</td><td>请把来源切换为「飞书知识库（Wiki）」</td></tr>
+<tr><td>任意位置的文档</td><td>✅ 关键词搜索</td><td>来源选「搜索有权限的文档」，按关键词搜索当前身份可见的文档</td></tr>
 <tr><td>共享空间 / 指定文件夹</td><td>⚠️ 需手动指定</td><td>没有「列出全部共享空间」的接口；但拿到 <code>folder_token</code> 就能浏览</td></tr>
 <tr><td>「我的文档库」</td><td>❌ 暂无接口</td><td>个人页面树模块，官方标为内测；与「我的空间」是两个独立模块</td></tr>
 </tbody>
 </table>
+<p><b>机器人（应用）身份能列出「有权限的文档」吗？</b>飞书<b>没有</b>提供「列出应用可访问的全部文档」这种接口，
+但有两个可用入口：<br>
+① 来源选「飞书知识库」→ 可列出应用加入的<b>全部知识空间</b>及其节点；<br>
+② 来源选「搜索有权限的文档」→ 用关键词搜出<b>应用可见</b>的文档（需 <code>search:docs:read</code>）。<br>
+云盘（我的空间/共享空间）则必须先把文件夹分享给应用，并且需要知道 <code>folder_token</code> 才能进入。</p>
 <p><b>想同步共享空间 / 某个文件夹？</b>在浏览器里打开该文件夹，复制地址栏里的链接
 （形如 <code>https://xxx.feishu.cn/drive/folder/fldcnxxxxxxxx</code>），粘贴到同步对话框的
 <b>「文件夹 token / 链接」</b>输入框，回车即可浏览并同步。</p>
