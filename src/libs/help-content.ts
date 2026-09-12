@@ -9,7 +9,6 @@ const FEISHU_SCOPES = [
     "docx:document:readonly",
     "drive:drive:readonly",
     "docs:document:readonly",
-    "search:docs:read",
 ].join("\n");
 
 const LINK_STYLE = 'style="color:var(--b3-theme-primary);text-decoration:underline;"';
@@ -62,10 +61,8 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <tr><td><code>docx:document:readonly</code></td><td>✅ 必需</td><td>读取新版文档（docx）的正文内容</td></tr>
 <tr><td><code>drive:drive:readonly</code></td><td>✅ 必需</td><td>浏览云文档文件夹、下载文档中的图片与附件</td></tr>
 <tr><td><code>docs:document.content:read</code></td><td>⭕ 可选</td><td>同步旧版文档（只能取纯文本）</td></tr>
-<tr><td><code>search:docs:read</code></td><td>⭕ 推荐</td><td>按关键词搜索有权限的文档（应用/机器人身份也能用）</td></tr>
 </tbody>
 </table>
-<p>💡 只想同步「应用被授权的内容」时，<b>不需要</b>额外配置：来源选「搜索有权限的文档」即可用关键词搜出来（依赖 <code>search:docs:read</code>）。</p>
 <p><b>开通后一定要发布版本</b>：左侧 <b>版本管理与发布</b> → 创建版本 → 申请发布。（若企业开启了应用管控，需要管理员审核通过。）</p>
 <pre class="plugin-help__copy-src">${FEISHU_SCOPES}</pre>
 <button class="b3-button b3-button--outline plugin-help__copy">复制权限清单</button>`,
@@ -104,7 +101,7 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <table class="plugin-help__table">
 <thead><tr><th>选项</th><th>说明</th></tr></thead>
 <tbody>
-<tr><td>同步来源</td><td>「飞书知识库（Wiki）」按知识空间同步；「飞书云文档」按文件夹同步；「搜索有权限的文档」按关键词搜索后勾选同步</td></tr>
+<tr><td>同步来源</td><td>「飞书知识库（Wiki）」按知识空间同步；「存储（云盘）」按文件夹浏览并同步；「指定链接」粘贴文档/知识库/文件夹链接直接解析后同步</td></tr>
 <tr><td>知识空间</td><td>选择要同步的知识库（只在 Wiki 来源下显示）</td></tr>
 <tr><td>目标笔记本 / 根路径</td><td>同步到哪个笔记本、放在该笔记本下的哪个目录</td></tr>
 <tr><td>递归子文档</td><td>勾选后连同下级子文档一起同步，并保留层级结构</td></tr>
@@ -127,18 +124,17 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <tbody>
 <tr><td>云盘 ·「我的空间」</td><td>✅ 可以</td><td>「云文档」来源默认就是它，含子文件夹</td></tr>
 <tr><td>知识库（Wiki）</td><td>✅ 可以</td><td>请把来源切换为「飞书知识库（Wiki）」</td></tr>
-<tr><td>全部可访问文档</td><td>✅ 关键词留空</td><td>来源选「搜索有权限的文档」→ <b>关键词留空</b>会递归汇总所有知识空间节点 + 云盘「我的空间」的文档，扁平列出（不依赖搜索接口）</td></tr>
-<tr><td>按关键词搜索文档</td><td>⚠️ 建议用户身份</td><td>输入关键词才走搜索接口；该接口按「<b>用户可见</b>」设计，应用身份常常搜不到，建议切「用户身份」</td></tr>
-<tr><td>共享空间 / 指定文件夹</td><td>⚠️ 需手动指定</td><td>没有「列出全部共享空间」的接口；但拿到 <code>folder_token</code> 就能浏览</td></tr>
+<tr><td>存储 · 云盘根目录</td><td>✅</td><td>来源选「存储（云盘）」，留空即浏览官方所说的「云空间根目录」</td></tr>
+<tr><td>共享空间 / 任意文件夹</td><td>⚠️ 用「指定链接」</td><td>没有「列举共享空间」的接口；在浏览器打开该文件夹，复制链接粘到「指定链接」来源即可浏览并同步</td></tr>
 <tr><td>「我的文档库」</td><td>❌ 暂无接口</td><td>个人页面树模块，官方标为内测；与「我的空间」是两个独立模块</td></tr>
 </tbody>
 </table>
 <p><b>机器人（应用）身份能列出「有权限的文档」吗？</b>飞书<b>没有</b>提供「列出应用可访问的全部文档」这种接口，
-但有两个可用入口：<br>
-① 来源选「飞书知识库」→ 可列出应用加入的<b>全部知识空间</b>及其节点；<br>
-② 来源选「搜索有权限的文档」→ <b>关键词留空</b>会递归汇总全部可访问文档（所有知识空间节点 + 云盘「我的空间」）扁平列出；
-输入关键词则走搜索接口，而搜索接口按「<b>用户可见</b>」设计，<b>建议配合「用户身份」使用</b>（需 <code>search:docs:read</code>）。<br>
-云盘（我的空间/共享空间）则必须先把文件夹分享给应用，并且需要知道 <code>folder_token</code> 才能进入。</p>
+只能从已知入口进入：<br>
+① 来源选「飞书知识库（Wiki）」→ 可列出应用加入的<b>全部知识空间</b>及其节点；<br>
+② 来源选「存储（云盘）」→ 浏览官方所说的「云空间根目录」（数组根/我的空间根）；<br>
+③ 来源选「指定链接」→ 把某个文档 / 知识库节点 / 文件夹的链接粘进去，直接解析同步（<b>共享空间等没有列举接口的位置就靠它</b>）。<br>
+云盘里的文件夹需要先把文件夹分享给应用（或应用所在的群），否则会提示无权限。</p>
 <p><b>想同步共享空间 / 某个文件夹？</b>在浏览器里打开该文件夹，复制地址栏里的链接
 （形如 <code>https://xxx.feishu.cn/drive/folder/fldcnxxxxxxxx</code>），粘贴到同步对话框的
 <b>「文件夹 token / 链接」</b>输入框，回车即可浏览并同步。</p>
@@ -164,15 +160,15 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 每次同步都会在日志里打印 <code>校验：飞书块 N 个 → 写入 M 批，思源现有 K 个块</code>，
 用它可以判断是「取少了」还是「写少了」。若差异明显，把这一行发出来即可定位。</dd>
 
-<dt>搜索文档总是「没有搜索到文档」</dt>
-<dd>按顺序排查：
-<ol>
-<li><b>是不是没填关键词</b>：飞书搜索接口是按关键词检索的，<b>空关键词不作为「查全部」</b>。现在关键词留空时会改为「递归汇总全部文档」（知识空间 + 云盘），不再走搜索接口。</li>
-<li><b>身份问题（最常见）</b>：该接口官方描述是「搜索<b>当前用户可见</b>的云文档」，用应用（机器人）身份调用经常返回 0 条。
-请到插件设置把「飞书访问身份」改为 <b>用户身份</b> 并完成授权，再搜索。</li>
-<li><b>权限没发布</b>：<code>search:docs:read</code> 光勾选还不够，必须到「版本管理与发布」创建版本并发布（或等管理员审核通过）。</li>
-<li>插件日志里会打印接口原始返回，可据此判断是被限流、参数错误还是真的没数据。</li>
-</ol></dd>
+<dt>「存储（云盘）」里看不到我的共享空间 / 文档库</dt>
+<dd>这是飞书接口的限制：<b>云空间 API 只覆盖「我的空间（云空间根目录）」和「已知 token 的文件夹」</b>，
+没有「列举共享空间 / 我的文档库」的接口。解决办法：
+<ul>
+<li>在浏览器里打开那个共享空间 / 文件夹，复制地址栏链接（形如 <code>https://xxx.feishu.cn/drive/folder/xxxx</code>），
+到「指定链接」来源粘贴解析；</li>
+<li>或把链接粘到「存储（云盘）」来源的「文件夹 token / 链接」输入框；</li>
+<li>部门/团队沉淀的内容一般在<b>知识库</b>里，用「飞书知识库（Wiki）」来源可以直接列出。</li>
+</ul></dd>
 
 <dt>提示「请先在插件设置中配置飞书应用的 App ID 与 App Secret」</dt>
 <dd>说明没填或没保存成功，回到「④ 在思源里填写配置」重新填写并点空白处保存。</dd>

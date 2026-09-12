@@ -10,8 +10,10 @@ Import documents from Feishu Wiki / Feishu Drive into SiYuan as native documents
 
 ### Features
 
+- Three sources: **Feishu Wiki**, **Storage (Drive)**, **Specific link**.
 - Sync from **Feishu Wiki**: browse knowledge spaces, recursively import sub-documents and keep the hierarchy.
-- Sync from **Feishu Drive**: browse "My Space" or any folder.
+- Sync from **Feishu Storage (Drive)**: browse the cloud-space root or a specific folder.
+- **Specific link**: paste a doc `/docx/`, legacy doc `/docs/`, Wiki `/wiki/` or folder `/folder/` link to parse and sync it.
 - **Incremental sync**: skip documents whose Feishu edit time has not changed.
 - **Asset localization**: download images/attachments and store them in the SiYuan asset folder.
 - Choose the target notebook and root path; already-synced documents are updated in place instead of duplicated.
@@ -32,11 +34,10 @@ dialog → `Finish`. See the built-in **Help** (search "user identity") for deta
 
 | Location | Supported | Notes |
 | --- | --- | --- |
-| Drive · "My Space" | ✅ | Default of the "Drive" source, including subfolders |
-| Wiki knowledge base | ✅ | Switch the source to "Feishu Wiki" — lists all spaces the identity has joined |
-| All accessible documents | ✅ | Source "Search accessible docs" — an **empty keyword** recursively aggregates every Wiki node + Drive "My Space" document into a flat list |
-| Keyword search | ⚠️ user identity recommended | A keyword calls Feishu's search API, which is **user-scoped**; the app identity often returns 0 results. Requires `search:docs:read` |
-| Shared space / specific folder | ⚠️ Manual | There is no "list all shared spaces" API; paste the folder link or `folder_token` into "Folder token / link" |
+| Storage · cloud-space root | ✅ | "Storage (Drive)" source; leave it empty to browse the official cloud-space root |
+| Wiki knowledge base | ✅ | "Feishu Wiki" source — lists all spaces the identity has joined |
+| Any document / folder | ✅ | "Specific link" source: paste a `/docx/`, `/wiki/` or `/folder/` link |
+| Shared space | ⚠️ link required | There is no "list shared spaces" API; paste the folder's browser link into "Specific link" or "Folder token / link" |
 | "My Documents Library" | ❌ | Personal page-tree module (beta), a separate module from "My Space"; no public Open API |
 
 ### Setup

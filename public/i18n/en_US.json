@@ -102,7 +102,7 @@
     "feishuModeUser": "User identity",
     "feishuFolderToken": "Folder token / link",
     "feishuFolderTokenPlaceholder": "Empty = My Space; you can also paste a shared space / folder link",
-    "feishuDriveHint": "\"Drive\" source can only list \"My Space\". Feishu \"My Documents Library\" is a separate personal module with no public Open API yet. To sync a shared space or a specific folder, paste its link (or folder token) above.",
+    "feishuDriveHint": "The \"Storage (Drive)\" source browses the official \"cloud space root\" (the root of My Space / Drive). Feishu has no API to enumerate shared spaces, so leaving it empty only shows the root; to sync a specific space or folder, paste its browser link (or folder token) above.",
     "feishuSourceSearch": "Search accessible docs",
     "feishuSearchLabel": "Keyword",
     "feishuSearchPlaceholder": "Empty = list ALL documents; or type a keyword (max 30 chars)",
@@ -111,5 +111,14 @@
     "feishuSearchNeedKeyword": "Please enter a keyword",
     "feishuSearchSearching": "Searching...",
     "feishuSearchEmpty": "No documents found (the app may lack the search:docs:read scope)",
-    "feishuOwner": "Owner"
+    "feishuOwner": "Owner",
+    "feishuSourceStorage": "Storage (Drive)",
+    "feishuSourceLink": "Specific link",
+    "feishuStorageRoot": "Storage root",
+    "feishuLinkLabel": "Feishu link",
+    "feishuLinkPlaceholder": "Paste a doc /docx/, Wiki /wiki/ or folder /folder/ link",
+    "feishuLinkParse": "Parse",
+    "feishuLinkHint": "Paste any Feishu link: doc /docx/, legacy doc /docs/, Wiki /wiki/, folder /folder/. Folders expand into a tree; documents can be checked and synced directly.",
+    "feishuLinkEmpty": "Please enter a Feishu doc / Wiki / folder link",
+    "feishuLinkUnsupported": "This link type is not supported"
 }

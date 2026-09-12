@@ -102,7 +102,7 @@
     "feishuModeUser": "用户身份",
     "feishuFolderToken": "文件夹 token / 链接",
     "feishuFolderTokenPlaceholder": "留空 = 我的空间；也可粘贴共享空间 / 文件夹的链接",
-    "feishuDriveHint": "「云文档」来源只能列出云盘「我的空间」；飞书「我的文档库」是独立的个人模块，开放平台暂无接口可列举。要同步共享空间或指定文件夹，请把它的链接（或 folder token）粘到上面。",
+    "feishuDriveHint": "「存储（云盘）」来源浏览的是官方所说的「云空间根目录」（即云盘/我的空间根）。飞书没有「列举共享空间/其它云盘空间」的接口，因此留空只会显示根目录；要同步某个空间或文件夹，请把它在浏览器里的链接（或 folder token）粘到上面。",
     "feishuSourceSearch": "搜索有权限的文档",
     "feishuSearchLabel": "关键词",
     "feishuSearchPlaceholder": "留空=汇总列出全部文档；或输入关键词搜索（最多 30 字）",
@@ -111,5 +111,14 @@
     "feishuSearchNeedKeyword": "请输入搜索关键词",
     "feishuSearchSearching": "搜索中...",
     "feishuSearchEmpty": "没有搜索到文档（也可能是应用缺少 search:docs:read 权限）",
-    "feishuOwner": "所有者"
+    "feishuOwner": "所有者",
+    "feishuSourceStorage": "存储（云盘）",
+    "feishuSourceLink": "指定链接",
+    "feishuStorageRoot": "存储根目录",
+    "feishuLinkLabel": "飞书链接",
+    "feishuLinkPlaceholder": "粘贴文档 /docx/、知识库 /wiki/、文件夹 /folder/ 链接",
+    "feishuLinkParse": "解析",
+    "feishuLinkHint": "把飞书里的链接直接粘进来即可：文档 /docx/、旧版文档 /docs/、知识库 /wiki/、文件夹 /folder/。文件夹会展开成目录树，文档可直接勾选同步。",
+    "feishuLinkEmpty": "请输入飞书文档 / 知识库 / 文件夹链接",
+    "feishuLinkUnsupported": "暂不支持该链接"
 }

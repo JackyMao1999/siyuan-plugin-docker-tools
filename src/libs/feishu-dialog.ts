@@ -3,7 +3,7 @@
  */
 
 import { Dialog, showMessage } from "siyuan";
-import { FeishuClient, FeishuDriveFile, FeishuSearchResult, FeishuWikiNode } from "./feishu-api";
+import { FeishuClient, FeishuDriveFile, FeishuWikiNode } from "./feishu-api";
 import {
     DEFAULT_SYNC_OPTIONS,
     FeishuSync,
@@ -13,7 +13,7 @@ import {
 } from "./feishu-sync";
 import { lsNotebooks } from "../api";
 
-type SourceType = "wiki" | "drive" | "search";
+type SourceType = "wiki" | "storage" | "link";
 
 /** 从链接或纯文本中解析飞书文件夹 token（支持直接粘贴文件夹链接） */
 function extractFolderToken(input: string): string {
@@ -24,8 +24,49 @@ function extractFolderToken(input: string): string {
     return text;
 }
 
+export interface ParsedFeishuLink {
+    /** 解析出的类型 */
+    type: "docx" | "doc" | "wiki" | "folder" | "unsupported";
+    /** 文档 / 节点 / 文件夹 token */
+    token: string;
+    /** 原始输入 */
+    raw: string;
+    /** 不支持的原始类型名（用于提示） */
+    unsupportedType?: string;
+}
+
+/**
+ * 解析飞书链接。
+ * 支持：/docx/、/docs/、/wiki/、/folder/；
+ * 其它（sheets、base、mindnotes、file、slides 等）标记为 unsupported。
+ */
+export function parseFeishuLink(input: string): ParsedFeishuLink {
+    const raw = (input || "").trim();
+    const tokenOnly = /^[A-Za-z0-9_-]{8,}$/.test(raw);
+    const rules: { re: RegExp; type: ParsedFeishuLink["type"] }[] = [
+        { re: /\/(?:docx|docs)\/([A-Za-z0-9_-]+)/, type: "docx" },
+        { re: /\/wiki\/([A-Za-z0-9_-]+)/, type: "wiki" },
+        { re: /\/(?:drive\/)?folder\/([A-Za-z0-9_-]+)/, type: "folder" },
+        { re: /\/doc\/([A-Za-z0-9_-]+)/, type: "doc" },
+        { re: /\/(sheets|base|mindnotes|file|slides)\/([A-Za-z0-9_-]+)/, type: "unsupported" },
+    ];
+    for (const rule of rules) {
+        const match = rule.re.exec(raw);
+        if (!match) continue;
+        if (rule.type === "unsupported") {
+            return { type: "unsupported", token: match[2], raw, unsupportedType: match[1] };
+        }
+        return { type: rule.type, token: match[1], raw };
+    }
+    if (tokenOnly) {
+        // 只粘贴了 token，按新版文档处理
+        return { type: "docx", token: raw, raw };
+    }
+    return { type: "unsupported", token: "", raw };
+}
+
 interface TreeNodeMeta {
-    kind: "space" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file" | "search-doc" | "all-doc";
+    kind: "space" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file" | "link-doc";
     key: string;
     title: string;
     /** wiki 空间 ID */
@@ -36,7 +77,6 @@ interface TreeNodeMeta {
     expandable?: boolean;
     /** 是否已加载子节点 */
     loaded?: boolean;
-    expanded?: boolean;
     /** 是否可以同步 */
     syncable?: boolean;
     objToken?: string;
@@ -88,19 +128,15 @@ export class FeishuSyncDialog {
     private folderInput: HTMLInputElement;
     private driveRow: HTMLElement;
     private driveHintEl: HTMLElement;
-    private searchInput: HTMLInputElement;
-    private searchBtn: HTMLButtonElement;
-    private searchRow: HTMLElement;
-    private searchHintEl: HTMLElement;
+    private linkInput: HTMLInputElement;
+    private linkBtn: HTMLButtonElement;
+    private linkRow: HTMLElement;
+    private linkHintEl: HTMLElement;
     private recursiveInput: HTMLInputElement;
     private assetsInput: HTMLInputElement;
     private incrementalInput: HTMLInputElement;
     private sourceNoteInput: HTMLInputElement;
     private options: FeishuSyncOptions;
-    /** 「汇总全部文档」时已发起的请求数，防止海量目录拖垮接口 */
-    private walkRequests = 0;
-    private readonly MAX_WALK_ITEMS = 2000;
-    private readonly MAX_WALK_REQUESTS = 400;
 
     constructor(deps: FeishuSyncDialogDeps) {
         this.deps = deps;
@@ -129,10 +165,10 @@ export class FeishuSyncDialog {
         this.folderInput = root.querySelector("#feishu-folder") as HTMLInputElement;
         this.driveRow = root.querySelector("#feishu-drive-row") as HTMLElement;
         this.driveHintEl = root.querySelector("#feishu-drive-hint") as HTMLElement;
-        this.searchInput = root.querySelector("#feishu-search") as HTMLInputElement;
-        this.searchBtn = root.querySelector("#feishu-search-btn") as HTMLButtonElement;
-        this.searchRow = root.querySelector("#feishu-search-row") as HTMLElement;
-        this.searchHintEl = root.querySelector("#feishu-search-hint") as HTMLElement;
+        this.linkInput = root.querySelector("#feishu-link") as HTMLInputElement;
+        this.linkBtn = root.querySelector("#feishu-link-btn") as HTMLButtonElement;
+        this.linkRow = root.querySelector("#feishu-link-row") as HTMLElement;
+        this.linkHintEl = root.querySelector("#feishu-link-hint") as HTMLElement;
         this.recursiveInput = root.querySelector("#feishu-recursive") as HTMLInputElement;
         this.assetsInput = root.querySelector("#feishu-assets") as HTMLInputElement;
         this.incrementalInput = root.querySelector("#feishu-incremental") as HTMLInputElement;
@@ -157,8 +193,8 @@ export class FeishuSyncDialog {
             <span class="feishu-sync__label">${this.t("feishuSourceType", "同步来源")}</span>
             <select id="feishu-source" class="b3-select fn__size200">
                 <option value="wiki">${this.t("feishuSourceWiki", "飞书知识库（Wiki）")}</option>
-                <option value="drive">${this.t("feishuSourceDrive", "飞书云文档（文件夹）")}</option>
-                <option value="search">${this.t("feishuSourceSearch", "搜索有权限的文档")}</option>
+                <option value="storage">${this.t("feishuSourceStorage", "存储（云盘）")}</option>
+                <option value="link">${this.t("feishuSourceLink", "指定链接")}</option>
             </select>
             <button id="feishu-refresh" class="b3-button b3-button--outline fn__flex-center">${this.t("feishuRefresh", "刷新")}</button>
             <span class="fn__space"></span>
@@ -170,15 +206,15 @@ export class FeishuSyncDialog {
         </div>
         <div class="feishu-sync__row" id="feishu-drive-row">
             <span class="feishu-sync__label">${this.t("feishuFolderToken", "文件夹 token / 链接")}</span>
-            <input id="feishu-folder" class="b3-text-field fn__flex-1" placeholder="${this.t("feishuFolderTokenPlaceholder", "留空 = 我的空间；也可粘贴共享空间 / 文件夹的链接")}">
+            <input id="feishu-folder" class="b3-text-field fn__flex-1" placeholder="${this.t("feishuFolderTokenPlaceholder", "留空 = 存储根目录；也可粘贴某个文件夹的链接")}">
         </div>
         <div class="feishu-sync__hint" id="feishu-drive-hint"></div>
-        <div class="feishu-sync__row" id="feishu-search-row">
-            <span class="feishu-sync__label">${this.t("feishuSearchLabel", "关键词")}</span>
-            <input id="feishu-search" class="b3-text-field fn__flex-1" placeholder="${this.t("feishuSearchPlaceholder", "输入关键词搜索有权限的文档（最多 30 字）")}">
-            <button id="feishu-search-btn" class="b3-button b3-button--outline">${this.t("feishuSearchBtn", "搜索")}</button>
+        <div class="feishu-sync__row" id="feishu-link-row">
+            <span class="feishu-sync__label">${this.t("feishuLinkLabel", "飞书链接")}</span>
+            <input id="feishu-link" class="b3-text-field fn__flex-1" placeholder="${this.t("feishuLinkPlaceholder", "粘贴文档 /docx/、知识库 /wiki/、文件夹 /folder/ 链接")}">
+            <button id="feishu-link-btn" class="b3-button b3-button--outline">${this.t("feishuLinkParse", "解析")}</button>
         </div>
-        <div class="feishu-sync__hint" id="feishu-search-hint"></div>
+        <div class="feishu-sync__hint" id="feishu-link-hint"></div>
         <div class="feishu-sync__row">
             <span class="feishu-sync__label">${this.t("feishuNotebook", "目标笔记本")}</span>
             <select id="feishu-notebook" class="b3-select fn__size200"></select>
@@ -210,10 +246,10 @@ export class FeishuSyncDialog {
         this.folderInput.addEventListener("change", () => {
             void this.loadTree();
         });
-        this.searchBtn.onclick = () => {
+        this.linkBtn.onclick = () => {
             void this.loadTree();
         };
-        this.searchInput.addEventListener("keydown", (e) => {
+        this.linkInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 e.preventDefault();
                 void this.loadTree();
@@ -245,11 +281,11 @@ export class FeishuSyncDialog {
 
         this.driveHintEl.textContent = this.t(
             "feishuDriveHint",
-            "「云文档」来源只能列出云盘「我的空间」；飞书「我的文档库」是独立的个人模块，开放平台暂无接口可列举。要同步共享空间或指定文件夹，请把它的链接（或 folder token）粘到上面。"
+            "「存储（云盘）」来源浏览的是官方所说的「云空间根目录」（即我的空间/云盘根）。飞书没有「共享空间/云盘各空间的列举接口」，因此留空只会显示根目录；要同步某个空间或文件夹，请把它的链接或 folder token 粘到上面。"
         );
-        this.searchHintEl.textContent = this.t(
-            "feishuSearchHint",
-            "按关键词搜索「当前身份有权限」的文档：应用身份=应用可见的文档，用户身份=你能看到的文档。需要应用开通 search:docs:read 权限。"
+        this.linkHintEl.textContent = this.t(
+            "feishuLinkHint",
+            "把飞书里的链接直接粘进来即可：文档 /docx/、旧版文档 /docs/、知识库 /wiki/、文件夹 /folder/。文件夹会展开成目录树，文档可直接勾选同步。"
         );
         this.updateRowVisibility();
 
@@ -323,20 +359,20 @@ export class FeishuSyncDialog {
     private updateRowVisibility() {
         const source = this.sourceSelect.value as SourceType;
         const isWiki = source === "wiki";
-        const isDrive = source === "drive";
-        const isSearch = source === "search";
+        const isStorage = source === "storage";
+        const isLink = source === "link";
         this.spaceRow.classList.toggle("fn__none", !isWiki);
-        this.driveRow.classList.toggle("fn__none", !isDrive);
-        this.driveHintEl.classList.toggle("fn__none", !isDrive);
-        this.searchRow.classList.toggle("fn__none", !isSearch);
-        this.searchHintEl.classList.toggle("fn__none", !isSearch);
+        this.driveRow.classList.toggle("fn__none", !isStorage);
+        this.driveHintEl.classList.toggle("fn__none", !isStorage);
+        this.linkRow.classList.toggle("fn__none", !isLink);
+        this.linkHintEl.classList.toggle("fn__none", !isLink);
     }
 
     private async loadTree() {
         this.treeEl.innerHTML = "";
         const source = this.sourceSelect.value as SourceType;
-        if (source === "search") {
-            await this.loadSearchResults();
+        if (source === "link") {
+            await this.loadLink();
             return;
         }
         if (source === "wiki") {
@@ -356,8 +392,8 @@ export class FeishuSyncDialog {
             this.treeEl.appendChild(this.createNodeElement(spaceMeta, 0));
         } else {
             const folderToken = this.getDriveFolderToken();
-            this.setStatus("正在加载云文档目录...");
-            let title = this.t("feishuMySpace", "我的空间");
+            this.setStatus("正在加载存储目录...");
+            let title = this.t("feishuStorageRoot", "存储根目录");
             let basePath: string[] = [];
             if (folderToken) {
                 title = await this.getFolderLabel(folderToken);
@@ -374,266 +410,81 @@ export class FeishuSyncDialog {
             };
             this.treeEl.appendChild(this.createNodeElement(rootMeta, 0));
             if (!folderToken && this.deps.isUserMode && !this.deps.isUserMode()) {
-                this.setStatus("注意：当前为应用身份，「我的空间」是应用自己的空间（通常为空）");
+                this.setStatus("注意：当前为应用身份，存储根目录是应用自己的空间（通常为空）");
                 return;
             }
         }
         this.setStatus("");
     }
 
-    /**
-     * 搜索来源的入口：
-     *  - 关键词为空 → 列出「全部可访问内容」（知识空间树），不走搜索接口
-     *  - 关键词非空 → 调用搜索接口（自动翻页）
-     */
-    private async loadSearchResults() {
-        const keyword = (this.searchInput.value || "").trim();
-        if (!keyword) {
-            try {
-                await this.loadAllAccessible();
-            } catch (e) {
-                this.appendLog(`汇总全部文档失败：${e instanceof Error ? e.message : e}`);
-                this.setStatus("");
-            }
+    /** 「指定链接」来源：解析粘贴的链接并渲染可同步节点 */
+    private async loadLink() {
+        const parsed = parseFeishuLink(this.linkInput.value);
+        if (!parsed.raw) {
+            this.setStatus(this.t("feishuLinkEmpty", "请输入飞书文档 / 知识库 / 文件夹链接"));
             return;
         }
-        if (keyword.length > 30) {
-            this.appendLog("关键词最长 30 个字符，已自动截取前 30 个字符。");
-        }
-        const query = keyword.slice(0, 30);
-        const maxItems = 500;
-        this.setStatus(this.t("feishuSearchSearching", "搜索中..."));
-
+        this.setStatus("正在解析链接...");
         try {
-            let pageToken = "";
-            let loaded = 0;
-            let total = 0;
-            let truncated = false;
-            let raw: any;
-            do {
-                const result = await this.deps.client.searchDocs(query, pageToken || undefined, 20);
-                if (raw === undefined) raw = result.raw;
-                total = result.total || total;
-                for (const item of result.items) {
-                    this.appendSearchResult(item);
+            if (parsed.type === "folder") {
+                const title = await this.getFolderLabel(parsed.token);
+                const meta: TreeNodeMeta = {
+                    kind: "drive-root",
+                    key: `drive:${parsed.token}`,
+                    title,
+                    expandable: true,
+                    objToken: parsed.token,
+                    path: [sanitizeTitle(title)],
+                    loader: async () => this.loadDriveMetas(parsed.token, [sanitizeTitle(title)]),
+                };
+                this.treeEl.appendChild(this.createNodeElement(meta, 0));
+                this.appendLog(`已解析为文件夹：${title}（token: ${parsed.token}）`);
+            } else if (parsed.type === "wiki") {
+                const node = await this.deps.client.getWikiNode(parsed.token);
+                if (!node) {
+                    this.appendLog("未能解析该知识库链接：请确认应用有权限，或换用「飞书知识库（Wiki）」来源浏览。");
+                    return;
                 }
-                loaded += result.items.length;
-                pageToken = result.hasMore ? result.pageToken : "";
-                this.setStatus(`已加载 ${loaded}/${total || "?"}`);
-                if (loaded >= maxItems && pageToken) {
-                    truncated = true;
-                    break;
-                }
-            } while (pageToken);
-
-            if (!loaded) {
-                this.explainEmptySearch(raw);
-                return;
+                const spaceId = node.space_id || node.origin_space_id || "";
+                const meta = this.wikiNodeToMeta(spaceId, node, []);
+                this.treeEl.appendChild(this.createNodeElement(meta, 0));
+                this.appendLog(`已解析为知识库节点：${node.title}（${node.obj_type}）`);
+            } else if (parsed.type === "docx" || parsed.type === "doc") {
+                const title = await this.getDocTitleSafe(parsed.token, parsed.type);
+                const meta: TreeNodeMeta = {
+                    kind: "link-doc",
+                    key: `drive:${parsed.token}`,
+                    title: title || parsed.token,
+                    syncable: true,
+                    objToken: parsed.token,
+                    objType: parsed.type,
+                    url: /^https?:\/\//i.test(parsed.raw) ? parsed.raw : undefined,
+                    badge: parsed.type.toUpperCase(),
+                    path: [],
+                };
+                this.treeEl.appendChild(this.createNodeElement(meta, 0));
+                this.appendLog(`已解析为文档：${title || parsed.token}`);
+            } else {
+                const type = parsed.unsupportedType ? `（类型：${parsed.unsupportedType}）` : "";
+                this.appendLog(`${this.t("feishuLinkUnsupported", "暂不支持该链接")}${type}`);
+                this.appendLog("目前支持：文档 /docx/、旧版文档 /docs/、知识库 /wiki/、文件夹 /folder/。");
             }
-            this.appendLog(
-                truncated
-                    ? `共约 ${total} 个结果，仅加载前 ${loaded} 个；可用更精确的关键词缩小范围。`
-                    : `共 ${total || loaded} 个结果，已全部加载。`
-            );
         } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            this.appendLog(`搜索失败：${message}`);
-            this.appendLog("若为权限错误，请确认 search:docs:read 已开通，并且已「创建版本 → 发布」后重试。");
+            this.appendLog(`解析链接失败：${e instanceof Error ? e.message : e}`);
         } finally {
             this.setStatus("");
         }
     }
 
-    /** 递归汇总知识空间下的所有文档 */
-    private async walkWikiDocs(spaceId: string, parentToken: string | undefined, path: string[], out: FeishuSyncItem[]) {
-        if (this.isWalkLimitReached(out)) return;
-        this.walkRequests++;
-        const nodes = await this.deps.client.listWikiNodes(spaceId, parentToken);
-        for (const node of nodes) {
-            if (this.isWalkLimitReached(out)) return;
-            if (node.obj_type === "docx" || node.obj_type === "doc") {
-                out.push({
-                    key: `wiki:${node.node_token}`,
-                    objToken: node.obj_token,
-                    objType: node.obj_type,
-                    title: node.title,
-                    editTime: node.obj_edit_time,
-                    path,
-                });
-            }
-            if (node.has_child) {
-                await this.walkWikiDocs(spaceId, node.node_token, [...path, sanitizeTitle(node.title)], out);
-            }
-        }
-    }
-
-    /** 递归汇总云盘文件夹下的所有文档 */
-    private async walkDriveDocs(folderToken: string, path: string[], out: FeishuSyncItem[]) {
-        if (this.isWalkLimitReached(out)) return;
-        this.walkRequests++;
-        const files = await this.deps.client.listDriveFiles(folderToken);
-        for (const file of files) {
-            if (this.isWalkLimitReached(out)) return;
-            if (file.type === "folder") {
-                await this.walkDriveDocs(file.token, [...path, sanitizeTitle(file.name)], out);
-            } else if (file.type === "docx" || file.type === "doc") {
-                out.push({
-                    key: `drive:${file.token}`,
-                    objToken: file.token,
-                    objType: file.type,
-                    title: file.name,
-                    path,
-                    url: file.url,
-                });
-            }
-        }
-    }
-
-    private isWalkLimitReached(out: FeishuSyncItem[]): boolean {
-        return out.length >= this.MAX_WALK_ITEMS || this.walkRequests >= this.MAX_WALK_REQUESTS;
-    }
-
-    /** 关键词为空时：递归汇总「所有可访问文档」并扁平列出（不依赖搜索接口） */
-    private async loadAllAccessible() {
-        this.setStatus("正在汇总全部文档...");
-        this.walkRequests = 0;
-        const items: FeishuSyncItem[] = [];
-        const errors: string[] = [];
-
+    /** 获取文档标题（失败返回空串） */
+    private async getDocTitleSafe(token: string, type: string): Promise<string> {
+        if (type !== "docx") return "";
         try {
-            if (!this.spaceSelect.options.length || !this.spaceSelect.value) {
-                await this.loadSpaces();
-            }
-            const spaces = Array.from(this.spaceSelect.options).filter((option) => !!option.value);
-            for (const option of spaces) {
-                const spaceName = option.textContent || option.value;
-                await this.walkWikiDocs(option.value, undefined, [sanitizeTitle(spaceName)], items);
-                this.setStatus(`正在汇总... 已找到 ${items.length} 个文档`);
-                if (this.isWalkLimitReached(items)) break;
-            }
+            const doc = await this.deps.client.getDocxDocument(token);
+            return doc?.title || "";
         } catch (e) {
-            errors.push(`知识库：${e instanceof Error ? e.message : e}`);
+            return "";
         }
-
-        // 云盘「我的空间」（应用身份下通常为空，失败忽略）
-        if (!this.isWalkLimitReached(items)) {
-            try {
-                await this.walkDriveDocs("", [], items);
-            } catch (e) {
-                errors.push(`云盘：${e instanceof Error ? e.message : e}`);
-            }
-        }
-
-        if (!items.length) {
-            this.appendLog("没有找到任何可访问的文档。");
-            if (errors.length) this.appendLog(`汇总异常：${errors.join("；")}`);
-            this.appendLog("提示：应用（机器人）身份只能看到被授权的内容，请把应用加入知识库/文档；或改用「用户身份」并完成授权。");
-            this.setStatus("");
-            return;
-        }
-
-        for (const item of items) {
-            this.appendAllDoc(item);
-        }
-        this.appendLog(
-            this.isWalkLimitReached(items)
-                ? `已列出 ${items.length} 个文档（达到上限，可用关键词缩小范围）。`
-                : `共列出 ${items.length} 个文档。`
-        );
-        if (errors.length) this.appendLog(`部分来源汇总失败：${errors.join("；")}`);
-        this.setStatus("");
-    }
-
-    /** 渲染一条「全部文档」结果 */
-    private appendAllDoc(item: FeishuSyncItem) {
-        const meta: TreeNodeMeta = {
-            kind: "all-doc",
-            key: item.key,
-            title: item.title,
-            syncable: item.objType === "docx" || item.objType === "doc",
-            objToken: item.objToken,
-            objType: item.objType,
-            editTime: item.editTime,
-            url: item.url,
-            owner: item.owner,
-            source: item.path.join(" / "),
-            badge: (item.objType || "").toUpperCase(),
-            path: item.path,
-        };
-        this.treeEl.appendChild(this.createNodeElement(meta, 0));
-    }
-
-    /** 搜索返回空结果时给出可操作的排查提示 */
-    private explainEmptySearch(raw: any) {
-        this.appendLog("搜索接口返回 0 条结果。");
-        this.appendLog(
-            "可能原因：① 飞书搜索接口按「用户可见」设计，应用（机器人）身份通常搜不到内容；" +
-            "② search:docs:read 权限只开通了、但没有「创建版本并发布」；③ 关键词确实没有匹配。"
-        );
-        if (this.deps.isUserMode && !this.deps.isUserMode()) {
-            this.appendLog("👉 当前是「应用（机器人）身份」，建议到插件设置把「飞书访问身份」改为「用户身份」并完成授权后重试。");
-        }
-        if (raw) {
-            try {
-                const text = JSON.stringify(raw);
-                this.appendLog(`接口原始返回：${text.length > 400 ? text.slice(0, 400) + "..." : text}`);
-            } catch (e) {
-                // 忽略
-            }
-        }
-    }
-
-    /** 渲染一条搜索结果 */
-    private appendSearchResult(item: FeishuSearchResult) {
-        const syncable = item.docType === "DOCX" || item.docType === "DOC" || item.entityType === "WIKI";
-        const meta: TreeNodeMeta = {
-            kind: "search-doc",
-            key: `search:${item.token}`,
-            title: item.title || item.token,
-            syncable,
-            objToken: item.token,
-            objType: (item.docType || "").toLowerCase(),
-            url: item.url,
-            owner: item.ownerName,
-            badge: item.docType || item.entityType,
-            path: [],
-        };
-        this.treeEl.appendChild(this.createNodeElement(meta, 0));
-    }
-
-    /** 把搜索结果解析为可同步的条目 */
-    private async resolveSearchResult(meta: TreeNodeMeta): Promise<FeishuSyncItem | null> {
-        const objToken = meta.objToken || "";
-        const objType = (meta.objType || "").toLowerCase();
-        if (objType === "wiki") {
-            const node = await this.deps.client.getWikiNode(objToken);
-            if (!node || (node.obj_type !== "docx" && node.obj_type !== "doc")) {
-                this.appendLog(`跳过《${meta.title}》：知识库节点类型「${node?.obj_type || "未知"}」暂不支持`);
-                return null;
-            }
-            return {
-                key: `wiki:${node.node_token}`,
-                objToken: node.obj_token,
-                objType: node.obj_type,
-                title: node.title || meta.title,
-                editTime: node.obj_edit_time,
-                owner: meta.owner,
-                path: [],
-            };
-        }
-        if (objType !== "docx" && objType !== "doc") {
-            this.appendLog(`跳过《${meta.title}》：类型「${objType || "未知"}」暂不支持`);
-            return null;
-        }
-        return {
-            key: `drive:${objToken}`,
-            objToken,
-            objType,
-            title: meta.title,
-            owner: meta.owner,
-            path: [],
-            url: meta.url,
-        };
     }
 
     /** 从输入内容里解析文件夹 token（支持直接粘贴链接） */
@@ -654,19 +505,22 @@ export class FeishuSyncDialog {
 
     private wikiNodeToMeta(spaceId: string, node: FeishuWikiNode, path: string[]): TreeNodeMeta {
         const syncable = node.obj_type === "docx" || node.obj_type === "doc";
+        const expandable = !!node.has_child && !!spaceId;
         return {
             kind: "wiki-node",
             key: `wiki:${node.node_token}`,
             title: node.title || "未命名",
             spaceId,
             nodeToken: node.node_token,
-            expandable: !!node.has_child,
+            expandable,
             syncable,
             objToken: node.obj_token,
             objType: node.obj_type,
             editTime: node.obj_edit_time,
             path,
-            loader: async () => this.loadWikiNodeMetas(spaceId, node.node_token, [...path, sanitizeTitle(node.title)]),
+            loader: expandable
+                ? async () => this.loadWikiNodeMetas(spaceId, node.node_token, [...path, sanitizeTitle(node.title)])
+                : undefined,
         };
     }
 
@@ -899,43 +753,29 @@ export class FeishuSyncDialog {
                                 path: basePath,
                             });
                         }
-                        if (meta.expandable && (this.options.recursive || !meta.syncable)) {
+                        if (meta.expandable && meta.spaceId && (this.options.recursive || !meta.syncable)) {
                             await collectWiki(
                                 meta.spaceId,
                                 meta.nodeToken,
                                 [...basePath, sanitizeTitle(meta.title)]
                             );
                         }
-                    } else if (meta.kind === "drive-root") {
-                        await collectDrive(meta.objToken || "", meta.path || []);
-                    } else if (meta.kind === "drive-folder") {
-                        await collectDrive(
-                            meta.objToken,
-                            [...basePath, sanitizeTitle(meta.title)]
-                        );
-                    } else if (meta.kind === "drive-file" && meta.syncable) {
-                        push({
-                            key: meta.key,
-                            objToken: meta.objToken,
-                            objType: meta.objType,
-                            title: meta.title,
-                            path: basePath,
-                            url: meta.url,
-                        });
-                    } else if (meta.kind === "search-doc" && meta.syncable) {
-                        const item = await this.resolveSearchResult(meta);
-                        if (item) push(item);
-                    } else if (meta.kind === "all-doc" && meta.syncable) {
-                        push({
-                            key: meta.key,
-                            objToken: meta.objToken,
-                            objType: meta.objType,
-                            title: meta.title,
-                            editTime: meta.editTime,
-                            owner: meta.owner,
-                            path: meta.path || [],
-                            url: meta.url,
-                        });
+                    } else if (meta.kind === "drive-root" || meta.kind === "drive-folder") {
+                        const folderToken = meta.kind === "drive-root" ? (meta.objToken || "") : meta.objToken;
+                        const folderPath = meta.kind === "drive-root" ? basePath : [...basePath, sanitizeTitle(meta.title)];
+                        await collectDrive(folderToken, folderPath);
+                    } else if (meta.kind === "drive-file" || meta.kind === "link-doc") {
+                        if (meta.syncable) {
+                            push({
+                                key: meta.key,
+                                objToken: meta.objToken,
+                                objType: meta.objType,
+                                title: meta.title,
+                                editTime: meta.editTime,
+                                path: basePath,
+                                url: meta.url,
+                            });
+                        }
                     }
                 }
                 // 继续遍历已加载的子节点，以便收集被单独勾选的深层文档（重复项由 seen 去重）

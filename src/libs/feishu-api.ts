@@ -74,6 +74,7 @@ export interface FeishuWikiNode {
     obj_token: string;
     obj_type: string;
     title: string;
+    space_id?: string;
     parent_node_token?: string;
     node_type?: string;
     origin_node_token?: string;
