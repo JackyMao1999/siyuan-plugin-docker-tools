@@ -73,3 +73,258 @@
     color: var(--b3-theme-on-surface-light);
     margin-top: 4px;
 }
+
+/* ------------------------------ 飞书知识库同步 ------------------------------ */
+
+.feishu-sync {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 12px 16px 0;
+}
+
+.feishu-sync__config {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--b3-border-color);
+}
+
+.feishu-sync__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.feishu-sync__row.feishu-sync__options {
+    gap: 16px;
+    color: var(--b3-theme-on-surface);
+    font-size: 13px;
+}
+
+.feishu-sync__row.feishu-sync__options label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.feishu-sync__label {
+    flex: none;
+    font-size: 13px;
+    color: var(--b3-theme-on-surface-light);
+}
+
+.feishu-sync__status {
+    font-size: 12px;
+    color: var(--b3-theme-primary);
+}
+
+.feishu-sync__tree {
+    flex: 1 1 auto;
+    min-height: 160px;
+    overflow: auto;
+    padding: 8px 0;
+}
+
+.feishu-sync__log {
+    flex: none;
+    height: 120px;
+    overflow: auto;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    border: 1px solid var(--b3-border-color);
+    border-radius: 4px;
+    background: var(--b3-theme-surface);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--b3-theme-on-surface);
+}
+
+.feishu-sync__log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.feishu-sync__footer {
+    flex: none;
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 0;
+    border-top: 1px solid var(--b3-border-color);
+}
+
+.feishu-sync__node {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    cursor: default;
+    font-size: 13px;
+}
+
+.feishu-sync__node:hover {
+    background: var(--b3-theme-surface-light);
+}
+
+.feishu-sync__toggle {
+    display: inline-block;
+    width: 14px;
+    flex: none;
+    text-align: center;
+    cursor: pointer;
+    color: var(--b3-theme-on-surface-light);
+    user-select: none;
+}
+
+.feishu-sync__checkbox {
+    flex: none;
+    margin: 0 2px 0 0;
+}
+
+.feishu-sync__icon {
+    flex: none;
+}
+
+.feishu-sync__node-title {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.feishu-sync__badge {
+    flex: none;
+    font-size: 11px;
+    color: var(--b3-theme-on-surface-light);
+    border: 1px solid var(--b3-border-color);
+    border-radius: 3px;
+    padding: 0 4px;
+}
+
+.feishu-sync__loading,
+.feishu-sync__empty {
+    padding: 2px 0 2px 24px;
+    font-size: 12px;
+    color: var(--b3-theme-on-surface-light);
+}
+
+/* ------------------------------ 帮助对话框 ------------------------------ */
+
+.plugin-help {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 12px 16px 16px;
+}
+
+.plugin-help__bar {
+    flex: none;
+    display: flex;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--b3-border-color);
+}
+
+.plugin-help__body {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding-top: 8px;
+}
+
+.plugin-help__topic {
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    border: 1px solid var(--b3-border-color);
+    border-radius: 6px;
+    background: var(--b3-theme-surface);
+}
+
+.plugin-help__title {
+    margin: 0 0 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--b3-theme-on-background);
+}
+
+.plugin-help__content {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--b3-theme-on-surface);
+}
+
+.plugin-help__content ol,
+.plugin-help__content ul {
+    margin: 4px 0;
+    padding-left: 20px;
+}
+
+.plugin-help__content p {
+    margin: 6px 0;
+}
+
+.plugin-help__content pre {
+    margin: 6px 0;
+    padding: 8px;
+    border-radius: 4px;
+    background: var(--b3-theme-background);
+    font-size: 12px;
+    overflow: auto;
+}
+
+.plugin-help__content code {
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--b3-theme-background);
+    font-size: 12px;
+}
+
+.plugin-help__table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6px 0;
+    font-size: 12px;
+}
+
+.plugin-help__table th,
+.plugin-help__table td {
+    border: 1px solid var(--b3-border-color);
+    padding: 4px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.plugin-help__table th {
+    background: var(--b3-theme-background);
+    white-space: nowrap;
+}
+
+.plugin-help__faq dt {
+    margin-top: 8px;
+    font-weight: 600;
+}
+
+.plugin-help__faq dd {
+    margin: 2px 0 0 16px;
+    color: var(--b3-theme-on-surface-light);
+}
+
+.plugin-help__copy {
+    margin-top: 6px;
+}
+
+.plugin-help__copy-src {
+    display: none;
+}
+
+.plugin-help__empty {
+    padding: 24px 0;
+    text-align: center;
+    color: var(--b3-theme-on-surface-light);
+}

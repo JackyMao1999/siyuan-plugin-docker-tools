@@ -27,9 +27,9 @@
     "zh_CN": "Docker端工具集"
   },
   "description": {
-    "default": "Export documents as PDF with configurable formatting",
-    "en_US": "Export documents as PDF with configurable formatting",
-    "zh_CN": "支持文档导出为 PDF 和格式化打印"
+    "default": "Export documents as PDF, print, and sync Feishu knowledge base into SiYuan",
+    "en_US": "Export documents as PDF, print, and sync Feishu knowledge base into SiYuan",
+    "zh_CN": "支持文档导出为 PDF、格式化打印，以及飞书知识库同步到思源笔记"
   },
   "readme": {
     "en_US": "README.md",
@@ -45,7 +45,12 @@
     "export",
     "pdf",
     "print",
+    "feishu",
+    "lark",
+    "knowledge base",
     "导出",
-    "打印"
+    "打印",
+    "飞书",
+    "知识库"
   ]
 }

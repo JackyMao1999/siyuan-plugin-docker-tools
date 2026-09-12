@@ -241,6 +241,42 @@ export const getFileBlob = async (path: string): Promise<Blob | null> => {
     return await response.blob();
 }
 
+/**
+ * 上传一个文件到思源的 assets 目录
+ * @param file 文件对象
+ * @returns 上传成功后的资源相对路径（形如 assets/xxx.png），失败返回 null
+ */
+export async function uploadAsset(file: File): Promise<string | null> {
+    const formData = new FormData();
+    formData.append("assetsDirPath", "/assets/");
+    formData.append("file", file);
+
+    const headers: Record<string, string> = {};
+    const token = (window as any)?.siyuan?.config?.api?.token;
+    if (token) {
+        headers["Authorization"] = `Token ${token}`;
+    }
+
+    try {
+        const response = await fetch("/api/asset/upload", {
+            method: "POST",
+            headers,
+            body: formData,
+        });
+        const res = await response.json();
+        if (res.code !== 0) {
+            console.error("上传资源失败:", res.msg);
+            return null;
+        }
+        const succMap: IResUpload["succMap"] = res.data?.succMap || {};
+        const keys = Object.keys(succMap);
+        return keys.length ? succMap[keys[0]] : null;
+    } catch (e) {
+        console.error("上传资源异常:", e);
+        return null;
+    }
+}
+
 // **************************************** Notification ****************************************
 
 export async function pushMsg(msg: string, timeout: number = 7000) {
