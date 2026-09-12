@@ -25,7 +25,7 @@ function extractFolderToken(input: string): string {
 }
 
 interface TreeNodeMeta {
-    kind: "space" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file" | "search-doc";
+    kind: "space" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file" | "search-doc" | "all-doc";
     key: string;
     title: string;
     /** wiki 空间 ID */
@@ -47,6 +47,8 @@ interface TreeNodeMeta {
     badge?: string;
     /** 文档所有者（用于在列表右侧显示） */
     owner?: string;
+    /** 文档位置（所有者缺失时在右侧显示） */
+    source?: string;
     /** 目标目录层级 */
     path: string[];
     /** 子节点加载器 */
@@ -95,6 +97,10 @@ export class FeishuSyncDialog {
     private incrementalInput: HTMLInputElement;
     private sourceNoteInput: HTMLInputElement;
     private options: FeishuSyncOptions;
+    /** 「汇总全部文档」时已发起的请求数，防止海量目录拖垮接口 */
+    private walkRequests = 0;
+    private readonly MAX_WALK_ITEMS = 2000;
+    private readonly MAX_WALK_REQUESTS = 400;
 
     constructor(deps: FeishuSyncDialogDeps) {
         this.deps = deps;
@@ -383,7 +389,12 @@ export class FeishuSyncDialog {
     private async loadSearchResults() {
         const keyword = (this.searchInput.value || "").trim();
         if (!keyword) {
-            await this.loadAllAccessible();
+            try {
+                await this.loadAllAccessible();
+            } catch (e) {
+                this.appendLog(`汇总全部文档失败：${e instanceof Error ? e.message : e}`);
+                this.setStatus("");
+            }
             return;
         }
         if (keyword.length > 30) {
@@ -433,39 +444,123 @@ export class FeishuSyncDialog {
         }
     }
 
-    /** 关键词为空时：列出全部可访问的知识空间（不依赖搜索接口） */
+    /** 递归汇总知识空间下的所有文档 */
+    private async walkWikiDocs(spaceId: string, parentToken: string | undefined, path: string[], out: FeishuSyncItem[]) {
+        if (this.isWalkLimitReached(out)) return;
+        this.walkRequests++;
+        const nodes = await this.deps.client.listWikiNodes(spaceId, parentToken);
+        for (const node of nodes) {
+            if (this.isWalkLimitReached(out)) return;
+            if (node.obj_type === "docx" || node.obj_type === "doc") {
+                out.push({
+                    key: `wiki:${node.node_token}`,
+                    objToken: node.obj_token,
+                    objType: node.obj_type,
+                    title: node.title,
+                    editTime: node.obj_edit_time,
+                    path,
+                });
+            }
+            if (node.has_child) {
+                await this.walkWikiDocs(spaceId, node.node_token, [...path, sanitizeTitle(node.title)], out);
+            }
+        }
+    }
+
+    /** 递归汇总云盘文件夹下的所有文档 */
+    private async walkDriveDocs(folderToken: string, path: string[], out: FeishuSyncItem[]) {
+        if (this.isWalkLimitReached(out)) return;
+        this.walkRequests++;
+        const files = await this.deps.client.listDriveFiles(folderToken);
+        for (const file of files) {
+            if (this.isWalkLimitReached(out)) return;
+            if (file.type === "folder") {
+                await this.walkDriveDocs(file.token, [...path, sanitizeTitle(file.name)], out);
+            } else if (file.type === "docx" || file.type === "doc") {
+                out.push({
+                    key: `drive:${file.token}`,
+                    objToken: file.token,
+                    objType: file.type,
+                    title: file.name,
+                    path,
+                    url: file.url,
+                });
+            }
+        }
+    }
+
+    private isWalkLimitReached(out: FeishuSyncItem[]): boolean {
+        return out.length >= this.MAX_WALK_ITEMS || this.walkRequests >= this.MAX_WALK_REQUESTS;
+    }
+
+    /** 关键词为空时：递归汇总「所有可访问文档」并扁平列出（不依赖搜索接口） */
     private async loadAllAccessible() {
-        this.setStatus("正在列出全部可访问内容...");
+        this.setStatus("正在汇总全部文档...");
+        this.walkRequests = 0;
+        const items: FeishuSyncItem[] = [];
+        const errors: string[] = [];
+
         try {
             if (!this.spaceSelect.options.length || !this.spaceSelect.value) {
                 await this.loadSpaces();
             }
-            const options = Array.from(this.spaceSelect.options).filter((option) => !!option.value);
-            if (!options.length) {
-                this.appendLog("没有找到可访问的知识空间；请确认应用已被加入知识库并已发布权限。");
-                return;
+            const spaces = Array.from(this.spaceSelect.options).filter((option) => !!option.value);
+            for (const option of spaces) {
+                const spaceName = option.textContent || option.value;
+                await this.walkWikiDocs(option.value, undefined, [sanitizeTitle(spaceName)], items);
+                this.setStatus(`正在汇总... 已找到 ${items.length} 个文档`);
+                if (this.isWalkLimitReached(items)) break;
             }
-            for (const option of options) {
-                const spaceId = option.value;
-                const spaceName = option.textContent || spaceId;
-                const meta: TreeNodeMeta = {
-                    kind: "space",
-                    key: `space:${spaceId}`,
-                    title: spaceName,
-                    spaceId,
-                    expandable: true,
-                    path: [],
-                    loader: async () => this.loadWikiNodeMetas(spaceId, undefined, [spaceName]),
-                };
-                this.treeEl.appendChild(this.createNodeElement(meta, 0));
-            }
-            this.appendLog(`已列出 ${options.length} 个知识空间（展开即可查看节点）。`);
-            this.appendLog("提示：这是「全部可访问内容」的知识库部分；云盘请用「飞书云文档」来源，按关键词查找请在上方输入关键词。");
         } catch (e) {
-            this.appendLog(`列出全部内容失败：${e instanceof Error ? e.message : e}`);
-        } finally {
-            this.setStatus("");
+            errors.push(`知识库：${e instanceof Error ? e.message : e}`);
         }
+
+        // 云盘「我的空间」（应用身份下通常为空，失败忽略）
+        if (!this.isWalkLimitReached(items)) {
+            try {
+                await this.walkDriveDocs("", [], items);
+            } catch (e) {
+                errors.push(`云盘：${e instanceof Error ? e.message : e}`);
+            }
+        }
+
+        if (!items.length) {
+            this.appendLog("没有找到任何可访问的文档。");
+            if (errors.length) this.appendLog(`汇总异常：${errors.join("；")}`);
+            this.appendLog("提示：应用（机器人）身份只能看到被授权的内容，请把应用加入知识库/文档；或改用「用户身份」并完成授权。");
+            this.setStatus("");
+            return;
+        }
+
+        for (const item of items) {
+            this.appendAllDoc(item);
+        }
+        this.appendLog(
+            this.isWalkLimitReached(items)
+                ? `已列出 ${items.length} 个文档（达到上限，可用关键词缩小范围）。`
+                : `共列出 ${items.length} 个文档。`
+        );
+        if (errors.length) this.appendLog(`部分来源汇总失败：${errors.join("；")}`);
+        this.setStatus("");
+    }
+
+    /** 渲染一条「全部文档」结果 */
+    private appendAllDoc(item: FeishuSyncItem) {
+        const meta: TreeNodeMeta = {
+            kind: "all-doc",
+            key: item.key,
+            title: item.title,
+            syncable: item.objType === "docx" || item.objType === "doc",
+            objToken: item.objToken,
+            objType: item.objType,
+            editTime: item.editTime,
+            url: item.url,
+            owner: item.owner,
+            source: item.path.join(" / "),
+            badge: (item.objType || "").toUpperCase(),
+            path: item.path,
+        };
+        this.treeEl.appendChild(this.createNodeElement(meta, 0));
     }
 
     /** 搜索返回空结果时给出可操作的排查提示 */
@@ -650,12 +745,15 @@ export class FeishuSyncDialog {
             node.appendChild(typeBadge);
         }
 
-        if (meta.owner) {
-            const ownerEl = document.createElement("span");
-            ownerEl.className = "feishu-sync__owner";
-            ownerEl.textContent = meta.owner;
-            ownerEl.title = `${this.t("feishuOwner", "所有者")}：${meta.owner}`;
-            node.appendChild(ownerEl);
+        if (meta.owner || meta.source) {
+            const rightEl = document.createElement("span");
+            rightEl.className = "feishu-sync__owner";
+            rightEl.textContent = meta.owner || meta.source || "";
+            const tips: string[] = [];
+            if (meta.owner) tips.push(`${this.t("feishuOwner", "所有者")}：${meta.owner}`);
+            if (meta.source) tips.push(`位置：${meta.source}`);
+            rightEl.title = tips.join(" · ");
+            node.appendChild(rightEl);
         }
 
         if (!meta.syncable && !meta.expandable) {
@@ -827,6 +925,17 @@ export class FeishuSyncDialog {
                     } else if (meta.kind === "search-doc" && meta.syncable) {
                         const item = await this.resolveSearchResult(meta);
                         if (item) push(item);
+                    } else if (meta.kind === "all-doc" && meta.syncable) {
+                        push({
+                            key: meta.key,
+                            objToken: meta.objToken,
+                            objType: meta.objType,
+                            title: meta.title,
+                            editTime: meta.editTime,
+                            owner: meta.owner,
+                            path: meta.path || [],
+                            url: meta.url,
+                        });
                     }
                 }
                 // 继续遍历已加载的子节点，以便收集被单独勾选的深层文档（重复项由 seen 去重）
