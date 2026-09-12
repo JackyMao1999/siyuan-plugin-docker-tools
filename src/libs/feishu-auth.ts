@@ -68,15 +68,18 @@ export class FeishuAuth {
     /** 生成授权链接。redirectUri 需与飞书后台「安全设置」中配置的回调地址一致 */
     buildAuthorizeUrl(domain: string, appId: string, redirectUri: string, scope: string): string {
         const base = `${FeishuClient.accountsDomain(domain)}/open-apis/authen/v1/authorize`;
-        const params = new URLSearchParams({
-            client_id: appId,
-            response_type: "code",
-            redirect_uri: redirectUri,
-            scope,
-            state: Math.random().toString(36).slice(2),
-            prompt: "consent",
-        });
-        return `${base}?${params.toString()}`;
+        // 手动拼接查询串：用 %20 表示空格（比 URLSearchParams 的 + 更稳妥）
+        const query = [
+            ["client_id", appId],
+            ["response_type", "code"],
+            ["redirect_uri", redirectUri],
+            ["scope", scope],
+            ["state", Math.random().toString(36).slice(2)],
+            ["prompt", "consent"],
+        ]
+            .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+            .join("&");
+        return `${base}?${query}`;
     }
 
     /** 从用户粘贴的回调地址 / 纯 code 中提取授权码 */
@@ -192,6 +195,32 @@ export class FeishuAuth {
     async clear(): Promise<void> {
         this.tokens = null;
         await this.saver(null);
+    }
+
+    /** 开发者后台「安全设置（重定向 URL）」直达链接 */
+    static appConsoleUrl(domain: string, appId: string): string {
+        const base = (domain || "").includes("larksuite") ? "https://open.larksuite.com" : "https://open.feishu.cn";
+        return `${base}/app/${encodeURIComponent(appId)}/safe`;
+    }
+
+    /** 校验回调地址是否明显不合规，返回提示信息（无问题返回空串） */
+    static validateRedirectUri(redirectUri: string): string {
+        const uri = (redirectUri || "").trim();
+        if (!uri) return "回调地址不能为空";
+        if (!/^https?:\/\//i.test(uri)) return "回调地址必须以 http:// 或 https:// 开头";
+        try {
+            // eslint-disable-next-line no-new
+            new URL(uri);
+        } catch (e) {
+            return "回调地址格式不正确，请检查是否有空格或非法字符";
+        }
+        if (uri.includes("#")) {
+            return "回调地址不要带 # 片段，建议填写 # 之前的部分";
+        }
+        if (uri.includes("?")) {
+            return "回调地址不要带 ? 参数，建议填写 ? 之前的部分";
+        }
+        return "";
     }
 
     /** 调用 OAuth2 令牌接口 */

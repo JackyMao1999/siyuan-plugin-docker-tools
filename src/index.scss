@@ -352,6 +352,16 @@
     color: var(--b3-theme-error, #d23f31);
 }
 
+.feishu-auth__alert {
+    flex: none;
+    margin-top: 8px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    background: var(--b3-card-error-background, rgba(210, 63, 49, 0.12));
+    color: var(--b3-theme-error, #d23f31);
+    font-size: 12px;
+}
+
 .feishu-auth__steps {
     flex: none;
     margin: 8px 0;

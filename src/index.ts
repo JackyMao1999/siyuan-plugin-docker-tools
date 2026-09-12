@@ -460,6 +460,9 @@ export default class DocExportPlugin extends Plugin {
             i18n: this.i18n as any,
             auth: this.feishuAuth,
             getConfig: () => this.getFeishuAuthConfig(),
+            setRedirectUri: async (value: string) => {
+                await this.settingUtils.setAndSave("feishuRedirectUri", value);
+            },
             onChanged: () => this.refreshFeishuCredentials(),
         });
     }

@@ -150,8 +150,9 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 此时云文档的「我的空间」是<b>应用自己</b>的空间（通常为空），知识库也只能看到被邀请加入的空间。</p>
 <p>要读取<b>你自己</b>的云文档和你有权限的知识库，需要切换到 <b>用户身份</b>（OAuth 授权）：</p>
 <ol>
-<li>飞书开发者后台 → 你的应用 → <b>安全设置</b> → <b>重定向 URL</b>，添加一个地址，例如
-<code>http://localhost:8080/feishu-callback</code>（这个地址不需要真的能打开）。</li>
+<li>飞书开发者后台 → 你的应用 → <b>开发配置 → 安全设置 → 重定向 URL</b>，
+添加一个地址，例如 <code>http://localhost:8080/feishu-callback</code>（这个地址不需要真的能打开）。
+<br>更省事的做法：在授权对话框里点 <b>「打开后台配置页」</b> 直达该页面，点 <b>「复制」</b> 把地址复制过去。</li>
 <li>确认应用已申请 <code>wiki:wiki:readonly</code>、<code>docx:document:readonly</code>、<code>drive:drive:readonly</code>
 权限并已发布版本（用户授权同样需要这些权限）。</li>
 <li>思源插件设置中：<b>飞书访问身份</b> 改为「用户身份」；
@@ -162,12 +163,16 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 </ol>
 <p>授权成功后，同步对话框顶部会显示「用户身份（你的名字）」，此时「我的空间」就是你自己的云文档了。</p>
 <dl class="plugin-help__faq">
+<dt>报错 20029「重定向 URL 有误，请联系应用管理员」</dt>
+<dd>官方定义：<code>redirect_uri</code> 非法。只有两个原因：
+<b>①根本没配置重定向 URL</b>；<b>②配置在了另一个应用上（App ID 不匹配）</b>。
+<br>解决：到 <b>开发配置 → 安全设置 → 重定向 URL</b> 把对话框里显示的地址<b>原样</b>添加进去并保存/发布；
+同时确认插件里的 App ID 就是配置该地址的那个应用。配置好后重新点「打开授权页面」。
+<br>提示：若回调地址带 <code>?</code> 或 <code>#</code>，后台只需配置到它们之前的部分。</dd>
 <dt>报错 20027</dt>
 <dd>授权链接里包含了应用「没有申请」的权限。请在飞书后台补齐权限，或减少授权范围后重试。</dd>
 <dt>报错 invalid_grant / 授权码无效</dt>
 <dd>授权码有效期只有 5 分钟且只能用一次，请重新点「打开授权页面」再走一遍。</dd>
-<dt>登录后提示重定向地址不匹配</dt>
-<dd>「授权回调地址」必须和飞书后台「安全设置 → 重定向 URL」里的地址逐字符一致（含 http/https、端口、路径）。</dd>
 <dt>换了应用或授权过期</dt>
 <dd>更换 App ID 后需要重新授权；授权过期会自动用 refresh_token 续期，续期失败时重新走一次授权即可。</dd>
 </dl>`,

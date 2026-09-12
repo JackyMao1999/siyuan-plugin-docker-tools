@@ -93,7 +93,7 @@
     "feishuAuthModeTenant": "应用（机器人）身份",
     "feishuAuthModeUser": "用户身份（可访问我的空间）",
     "feishuRedirectUri": "授权回调地址",
-    "feishuRedirectUriDesc": "需与飞书开发者后台「安全设置 → 重定向 URL」中配置的地址完全一致",
+    "feishuRedirectUriDesc": "必须与飞书开发者后台「开发配置 → 安全设置 → 重定向 URL」里的地址完全一致，否则授权页会报 20029",
     "feishuAuthTitle": "飞书用户授权",
     "feishuAuthDesc": "选择用户身份后，需要先完成一次授权以获取 user_access_token",
     "feishuAuthButton": "打开授权 / 授权管理",

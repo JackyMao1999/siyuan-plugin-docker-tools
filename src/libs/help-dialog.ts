@@ -30,7 +30,7 @@ function stripHtml(html: string): string {
     return (div.textContent || "").replace(/\s+/g, " ").trim();
 }
 
-async function copyToClipboard(text: string): Promise<boolean> {
+export async function copyToClipboard(text: string): Promise<boolean> {
     try {
         if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(text);
