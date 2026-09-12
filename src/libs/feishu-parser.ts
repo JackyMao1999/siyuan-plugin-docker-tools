@@ -60,11 +60,19 @@ interface ParserState {
     visited: Set<string>;
 }
 
-/** 转义会破坏 Markdown 语法的字符 */
+/**
+ * 转义会破坏 Markdown 语法的字符：
+ * - `\`、`` ` ``、`*`、`_`、`$`、`|`
+ * - 其中 `$` 必须转义，否则正文里的金额等 `$` 会与公式的 `$` 错误配对
+ * - `*`/`_` 转义后可避免 `a*b*c` 这类文本被误判为强调
+ */
 function escapeMd(text: string): string {
     return (text || "")
         .replace(/\\/g, "\\\\")
         .replace(/`/g, "\\`")
+        .replace(/\*/g, "\\*")
+        .replace(/_/g, "\\_")
+        .replace(/\$/g, "\\$")
         .replace(/\|/g, "\\|")
         .replace(/\r?\n/g, " ");
 }
@@ -76,10 +84,14 @@ function colorIndex(value: any): number {
     return Math.min(13, Math.max(1, n));
 }
 
-/** 渲染行内公式（内容做归一化，避免前后空格导致不被解析） */
+/**
+ * 渲染行内公式。
+ * Lute 默认不允许 `$` 后紧跟数字（避免把 $100 当公式），此时内侧补一个空格即可正常解析。
+ */
 function renderInlineMath(content: string): string {
     const formula = (content || "").replace(/\s*\n\s*/g, " ").trim();
-    return formula ? `$${formula}$` : "";
+    if (!formula) return "";
+    return /^\d/.test(formula) ? `$ ${formula} $` : `$${formula}$`;
 }
 
 function inlineFrom(elements: FeishuTextElement[] | undefined): string {
@@ -88,30 +100,48 @@ function inlineFrom(elements: FeishuTextElement[] | undefined): string {
     for (const el of elements) {
         if (!el) continue;
         if (el.text_run) {
-            let text = escapeMd(el.text_run.content || "");
-            if (!text) continue;
+            const raw = escapeMd(el.text_run.content || "");
+            if (!raw) continue;
+            // 先把首尾空白摘出来，最后再拼回去：
+            // 否则 `** 加粗 **`（标记内侧有空白）在 Markdown 中不会被解析成加粗
+            const matched = /^(\s*)([\s\S]*?)(\s*)$/.exec(raw);
+            const lead = matched ? matched[1] : "";
+            const tail = matched ? matched[3] : "";
+            let core = matched ? matched[2] : raw;
+            if (!core) {
+                out += raw;
+                continue;
+            }
             const style: any = el.text_run.text_element_style || {};
-            if (style.inline_code) text = "`" + text + "`";
-            if (style.bold) text = "**" + text + "**";
-            if (style.italic) text = "*" + text + "*";
-            if (style.strikethrough) text = "~~" + text + "~~";
-            if (style.underline) text = "<u>" + text + "</u>";
-            // 字体颜色 / 背景色：使用思源自身的样式变量，保留飞书里的着色
-            const textColor = colorIndex(style.text_color);
-            if (textColor) {
-                text = `<span style="color: var(--b3-font-color${textColor})">${text}</span>`;
+
+            if (style.inline_code) {
+                // 行内代码是字面内容，不能再套 HTML
+                core = "`" + core + "`";
+            } else {
+                // HTML 放在最内层，否则里面的 Markdown 标记不会被解析
+                if (style.underline) core = `<u>${core}</u>`;
+                const textColor = colorIndex(style.text_color);
+                if (textColor) {
+                    core = `<span style="color: var(--b3-font-color${textColor})">${core}</span>`;
+                }
+                const bgColor = colorIndex(style.background_color);
+                if (bgColor) {
+                    core = `<span style="background-color: var(--b3-font-background${bgColor})">${core}</span>`;
+                }
             }
-            const bgColor = colorIndex(style.background_color);
-            if (bgColor) {
-                text = `<span style="background-color: var(--b3-font-background${bgColor})">${text}</span>`;
-            }
+
+            // Markdown 行内标记放在最外层
+            if (style.bold) core = `**${core}**`;
+            if (style.italic) core = `*${core}*`;
+            if (style.strikethrough) core = `~~${core}~~`;
+
             const link = style.link?.url;
             if (link) {
                 let url = link;
                 try { url = decodeURIComponent(link); } catch (e) { /* ignore */ }
-                text = `[${text}](${url})`;
+                core = `[${core}](${url})`;
             }
-            out += text;
+            out += lead + core + tail;
         } else if (el.equation) {
             out += renderInlineMath(el.equation.content || "");
         } else if (el.mention_user) {
