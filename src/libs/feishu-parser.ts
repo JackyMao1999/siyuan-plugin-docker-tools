@@ -145,9 +145,11 @@ async function renderChildren(ids: string[] | undefined, state: ParserState, pre
     parts.forEach((part, index) => {
         if (index === 0) {
             out = part.text;
-        } else {
-            out += part.isList || parts[index - 1].isList ? "\n" : "\n\n";
+            return;
         }
+        // 仅列表项之间用紧凑换行，其余一律空行分隔（避免代码块/引用被并入上一行）
+        const separator = part.isList && parts[index - 1].isList ? "\n" : "\n\n";
+        out += separator + part.text;
     });
     return out;
 }
@@ -360,5 +362,14 @@ export async function docxBlocksToMarkdown(blocks: FeishuBlock[], ctx: ParseCont
         }
     }
 
-    return markdown.replace(/\n{3,}/g, "\n\n").trim();
+    const finalMarkdown = markdown.replace(/\n{3,}/g, "\n\n").trim();
+
+    // 自检：内容块很多但渲染结果极少，说明解析很可能异常（尽早暴露而不是静默丢内容）
+    const contentBlocks = blocks.filter((b) => b.block_type !== 1).length;
+    const segments = finalMarkdown.split(/\n{2,}/).filter((s) => s.trim()).length;
+    if (contentBlocks >= 5 && segments <= 2) {
+        ctx.onProgress?.(`⚠️ 自检：解析到 ${contentBlocks} 个内容块，但只渲染出 ${segments} 段，可能存在解析异常`);
+    }
+
+    return finalMarkdown;
 }
