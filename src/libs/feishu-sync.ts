@@ -55,6 +55,8 @@ export interface FeishuSyncItem {
     path: string[];
     /** 飞书网页链接（可选） */
     url?: string;
+    /** 文档所有者名称（可选） */
+    owner?: string;
 }
 
 export interface FeishuSyncRecord {
@@ -82,6 +84,36 @@ export function sanitizeTitle(title: string): string {
         .trim();
     const result = cleaned || "未命名文档";
     return result.length > 100 ? result.slice(0, 100) : result;
+}
+
+/**
+ * 把长 Markdown 按顶层块边界切分成多批，避免单次写入过大被截断。
+ * 切分点只取「代码围栏之外的空行」，因此不会把代码块/表格切坏。
+ */
+export function splitMarkdownChunks(markdown: string, maxChars = 40000): string[] {
+    const lines = (markdown || "").split("\n");
+    const chunks: string[] = [];
+    let current: string[] = [];
+    let currentLen = 0;
+    let inFence = false;
+
+    const flush = () => {
+        const text = current.join("\n").trim();
+        if (text) chunks.push(text);
+        current = [];
+        currentLen = 0;
+    };
+
+    for (const line of lines) {
+        if (/^\s*```/.test(line)) inFence = !inFence;
+        current.push(line);
+        currentLen += line.length + 1;
+        if (!inFence && line.trim() === "" && currentLen >= maxChars) {
+            flush();
+        }
+    }
+    flush();
+    return chunks.length ? chunks : [markdown];
 }
 
 /** 拼接路径片段 */
@@ -184,10 +216,12 @@ export class FeishuSync {
     }
 
     /** 构建一个文档的 Markdown 内容 */
-    private async buildMarkdown(item: FeishuSyncItem, options: FeishuSyncOptions, log?: (msg: string) => void): Promise<string> {
+    private async buildMarkdown(item: FeishuSyncItem, options: FeishuSyncOptions, log?: (msg: string) => void): Promise<{ markdown: string; blockCount: number }> {
         let markdown = "";
+        let blockCount = 0;
         if (item.objType === "docx") {
             const blocks: FeishuBlock[] = await this.client.getDocxBlocks(item.objToken);
+            blockCount = blocks.length;
             markdown = await docxBlocksToMarkdown(blocks, {
                 resolveImage: options.syncAssets
                     ? async (block: FeishuBlock) => this.resolveAsset(block.image?.token, "image")
@@ -198,19 +232,20 @@ export class FeishuSync {
                 onProgress: log,
             });
         } else if (item.objType === "doc") {
-            log?.("旧版文档，使用纯文本内容同步");
+            log?.("旧版文档，使用纯文本内容同步（格式会有损失）");
             markdown = await this.client.getDocRawContent(item.objToken);
         } else {
             throw new Error(`暂不支持同步的文档类型：${item.objType}`);
         }
 
         if (options.addSource) {
+            const owner = item.owner ? ` · 所有者：${item.owner}` : "";
             const source = item.url
-                ? `> 来源：[飞书文档](${item.url})`
-                : `> 来源：飞书文档（token: ${item.objToken}）`;
+                ? `> 来源：[飞书文档](${item.url})${owner}`
+                : `> 来源：飞书文档（token: ${item.objToken}）${owner}`;
             markdown = `${source}\n\n${markdown}`;
         }
-        return markdown;
+        return { markdown, blockCount };
     }
 
     /** 同步单个文档 */
@@ -221,7 +256,8 @@ export class FeishuSync {
         }
 
         try {
-            const markdown = await this.buildMarkdown(item, options, log);
+            const built = await this.buildMarkdown(item, options, log);
+            const markdown = built.markdown;
             if (!markdown.trim()) {
                 return { item, status: "skipped", message: "文档内容为空" };
             }
@@ -232,22 +268,45 @@ export class FeishuSync {
             let docId = record?.docId;
             let status: SyncStatus = "created";
 
+            // 分块写入：避免单次请求内容过大导致写入被截断
+            const chunks = splitMarkdownChunks(markdown);
+
             if (docId && await this.docExists(docId)) {
                 const children = await getChildBlocks(docId);
                 for (const child of children || []) {
                     await deleteBlock(child.id);
                 }
-                const ops = await appendBlock("markdown", markdown, docId);
-                if (!ops) {
-                    return { item, status: "failed", docId, message: "写入文档内容失败" };
+                for (let i = 0; i < chunks.length; i++) {
+                    const ops = await appendBlock("markdown", chunks[i], docId);
+                    if (!ops) {
+                        return { item, status: "failed", docId, message: `写入文档内容失败（第 ${i + 1}/${chunks.length} 批）` };
+                    }
                 }
                 status = "updated";
             } else {
-                docId = await createDocWithMd(options.notebook, path, markdown);
+                docId = await createDocWithMd(options.notebook, path, chunks[0] || "");
+                if (docId) {
+                    for (let i = 1; i < chunks.length; i++) {
+                        const ops = await appendBlock("markdown", chunks[i], docId);
+                        if (!ops) {
+                            log?.(`  ⚠️ 第 ${i + 1}/${chunks.length} 批写入失败，后续内容可能缺失`);
+                            break;
+                        }
+                    }
+                }
             }
 
             if (!docId) {
                 return { item, status: "failed", message: "写入思源文档失败" };
+            }
+
+            // 写入校验：对比思源侧实际块数与写入批次数，便于定位「内容不全」
+            try {
+                const rows = await sql(`select count(*) as cnt from blocks where root_id = '${docId}'`);
+                const blockCount = rows?.[0]?.cnt;
+                log?.(`  校验：飞书块 ${built.blockCount || "?"} 个 → 写入 ${chunks.length} 批，思源现有 ${blockCount ?? "?"} 个块`);
+            } catch (e) {
+                // 校验失败不影响同步结果
             }
 
             this.records[item.key] = {

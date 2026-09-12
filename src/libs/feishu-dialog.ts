@@ -3,7 +3,7 @@
  */
 
 import { Dialog, showMessage } from "siyuan";
-import { FeishuClient, FeishuDriveFile, FeishuWikiNode } from "./feishu-api";
+import { FeishuClient, FeishuDriveFile, FeishuSearchResult, FeishuWikiNode } from "./feishu-api";
 import {
     DEFAULT_SYNC_OPTIONS,
     FeishuSync,
@@ -45,6 +45,8 @@ interface TreeNodeMeta {
     url?: string;
     /** 列表上显示的额外标签（如文档类型） */
     badge?: string;
+    /** 文档所有者（用于在列表右侧显示） */
+    owner?: string;
     /** 目标目录层级 */
     path: string[];
     /** 子节点加载器 */
@@ -373,40 +375,46 @@ export class FeishuSyncDialog {
         this.setStatus("");
     }
 
-    /** 搜索当前身份有权限的文档并展示结果 */
+    /** 搜索当前身份有权限的文档并展示结果（自动翻页，直到取完或达到上限） */
     private async loadSearchResults() {
         const keyword = (this.searchInput.value || "").trim();
-        if (!keyword) {
-            this.setStatus(this.t("feishuSearchNeedKeyword", "请输入搜索关键词"));
-            return;
-        }
         if (keyword.length > 30) {
             this.appendLog("关键词最长 30 个字符，已自动截取前 30 个字符。");
         }
+        // 关键词可以为空：接口允许 query 为空字符串，此时返回全部可见文档
         const query = keyword.slice(0, 30);
+        const maxItems = 500;
         this.setStatus(this.t("feishuSearchSearching", "搜索中..."));
+
         try {
-            const result = await this.deps.client.searchDocs(query);
-            if (!result.items.length) {
+            let pageToken = "";
+            let loaded = 0;
+            let total = 0;
+            let truncated = false;
+            do {
+                const result = await this.deps.client.searchDocs(query, pageToken || undefined, 20);
+                total = result.total || total;
+                for (const item of result.items) {
+                    this.appendSearchResult(item);
+                }
+                loaded += result.items.length;
+                pageToken = result.hasMore ? result.pageToken : "";
+                this.setStatus(`已加载 ${loaded}/${total || "?"}`);
+                if (loaded >= maxItems && pageToken) {
+                    truncated = true;
+                    break;
+                }
+            } while (pageToken);
+
+            if (!loaded) {
                 this.appendLog(this.t("feishuSearchEmpty", "没有搜索到文档（也可能是应用缺少 search:docs:read 权限）"));
                 return;
             }
-            this.appendLog(`搜索到 ${result.total || result.items.length} 个文档，当前展示 ${result.items.length} 个。`);
-            for (const item of result.items) {
-                const syncable = item.docType === "DOCX" || item.docType === "DOC" || item.entityType === "WIKI";
-                const meta: TreeNodeMeta = {
-                    kind: "search-doc",
-                    key: `search:${item.token}`,
-                    title: item.title || item.token,
-                    syncable,
-                    objToken: item.token,
-                    objType: (item.docType || "").toLowerCase(),
-                    url: item.url,
-                    badge: item.docType || item.entityType,
-                    path: [],
-                };
-                this.treeEl.appendChild(this.createNodeElement(meta, 0));
-            }
+            this.appendLog(
+                truncated
+                    ? `共约 ${total} 个结果，仅加载前 ${loaded} 个；可用更精确的关键词缩小范围。`
+                    : `共 ${total || loaded} 个结果，已全部加载。`
+            );
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
             this.appendLog(`搜索失败：${message}`);
@@ -414,6 +422,24 @@ export class FeishuSyncDialog {
         } finally {
             this.setStatus("");
         }
+    }
+
+    /** 渲染一条搜索结果 */
+    private appendSearchResult(item: FeishuSearchResult) {
+        const syncable = item.docType === "DOCX" || item.docType === "DOC" || item.entityType === "WIKI";
+        const meta: TreeNodeMeta = {
+            kind: "search-doc",
+            key: `search:${item.token}`,
+            title: item.title || item.token,
+            syncable,
+            objToken: item.token,
+            objType: (item.docType || "").toLowerCase(),
+            url: item.url,
+            owner: item.ownerName,
+            badge: item.docType || item.entityType,
+            path: [],
+        };
+        this.treeEl.appendChild(this.createNodeElement(meta, 0));
     }
 
     /** 把搜索结果解析为可同步的条目 */
@@ -432,6 +458,7 @@ export class FeishuSyncDialog {
                 objType: node.obj_type,
                 title: node.title || meta.title,
                 editTime: node.obj_edit_time,
+                owner: meta.owner,
                 path: [],
             };
         }
@@ -444,6 +471,7 @@ export class FeishuSyncDialog {
             objToken,
             objType,
             title: meta.title,
+            owner: meta.owner,
             path: [],
             url: meta.url,
         };
@@ -533,6 +561,7 @@ export class FeishuSyncDialog {
             objType: meta.objType,
             editTime: meta.editTime,
             url: meta.url,
+            owner: meta.owner,
             path: meta.path,
         });
         if (!meta.syncable && !meta.expandable) {
@@ -555,6 +584,14 @@ export class FeishuSyncDialog {
             typeBadge.className = "feishu-sync__badge";
             typeBadge.textContent = meta.badge;
             node.appendChild(typeBadge);
+        }
+
+        if (meta.owner) {
+            const ownerEl = document.createElement("span");
+            ownerEl.className = "feishu-sync__owner";
+            ownerEl.textContent = meta.owner;
+            ownerEl.title = `${this.t("feishuOwner", "所有者")}：${meta.owner}`;
+            node.appendChild(ownerEl);
         }
 
         if (!meta.syncable && !meta.expandable) {

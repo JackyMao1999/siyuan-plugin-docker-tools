@@ -105,10 +105,11 @@
     "feishuDriveHint": "「云文档」来源只能列出云盘「我的空间」；飞书「我的文档库」是独立的个人模块，开放平台暂无接口可列举。要同步共享空间或指定文件夹，请把它的链接（或 folder token）粘到上面。",
     "feishuSourceSearch": "搜索有权限的文档",
     "feishuSearchLabel": "关键词",
-    "feishuSearchPlaceholder": "输入关键词搜索有权限的文档（最多 30 字）",
+    "feishuSearchPlaceholder": "留空=搜索全部；也可输入关键词（最多 30 字）",
     "feishuSearchBtn": "搜索",
-    "feishuSearchHint": "按关键词搜索「当前身份有权限」的文档：应用身份=应用可见的文档，用户身份=你能看到的文档。需要应用开通 search:docs:read 权限。",
+    "feishuSearchHint": "留空直接搜索「当前身份有权限」的全部文档；应用身份=应用可见的文档，用户身份=你能看到的文档。结果会自动翻页全部加载，右侧显示文档所有者。需要应用开通 search:docs:read 权限。",
     "feishuSearchNeedKeyword": "请输入搜索关键词",
     "feishuSearchSearching": "搜索中...",
-    "feishuSearchEmpty": "没有搜索到文档（也可能是应用缺少 search:docs:read 权限）"
+    "feishuSearchEmpty": "没有搜索到文档（也可能是应用缺少 search:docs:read 权限）",
+    "feishuOwner": "所有者"
 }

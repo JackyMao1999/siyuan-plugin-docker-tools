@@ -56,6 +56,8 @@ export interface ParseContext {
 interface ParserState {
     ctx: ParseContext;
     map: Map<string, FeishuBlock>;
+    /** 已渲染过的块，用于兜底补渲染 */
+    visited: Set<string>;
 }
 
 /** 转义会破坏 Markdown 语法的字符 */
@@ -184,6 +186,7 @@ async function renderTable(block: FeishuBlock, state: ParserState, prefix: strin
 
 async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", orderedIndex = 1): Promise<string> {
     const type = block.block_type;
+    state.visited.add(block.block_id);
     const { elements, style } = getTextContent(block);
 
     switch (type) {
@@ -233,6 +236,11 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             const content = [text, child].filter(Boolean).join("\n");
             if (!content) return "";
             return prefixLines(content.split("\n").map((line) => "> " + line).join("\n"), prefix);
+        }
+        case 16: { // 公式块
+            const content = block.equation?.content || inlineFrom(elements);
+            if (!content) return "";
+            return prefixLines(`$$\n${content}\n$$`, prefix);
         }
         case 17: { // 待办
             const text = inlineFrom(elements);
@@ -305,11 +313,12 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             return prefix + `> 知识库目录块`;
         }
         default: {
-            // 未支持类型：若含有子块则递归渲染
+            // 未支持类型：若含有子块则递归渲染，否则给出占位提示（避免内容静默丢失）
             if (block.children?.length) {
                 return renderChildren(block.children, state, prefix);
             }
-            return "";
+            const hint = block.text?.elements ? inlineFrom(block.text.elements) : "";
+            return prefix + `> ⚠️ 暂不支持的块（类型 ${type}）${hint ? "：" + hint : ""}`;
         }
     }
 }
@@ -323,13 +332,33 @@ export async function docxBlocksToMarkdown(blocks: FeishuBlock[], ctx: ParseCont
     for (const block of blocks) {
         map.set(block.block_id, block);
     }
-    const state: ParserState = { ctx, map };
+    const state: ParserState = { ctx, map, visited: new Set<string>() };
 
     // 找到根块（页面块，或没有父块的块）
     const root = blocks.find((b) => b.block_type === 1) || blocks.find((b) => !b.parent_id || !map.has(b.parent_id));
-    const markdown = root
+    let markdown = root
         ? await renderBlock(root, state)
         : await renderChildren(blocks.map((b) => b.block_id), state);
+
+    // 兜底：补渲染「没有被任何块引用」的孤立块，避免因 children 缺失导致内容丢失
+    const referenced = new Set<string>();
+    if (root) referenced.add(root.block_id);
+    for (const block of blocks) {
+        if (block.block_type === 1) referenced.add(block.block_id);
+        for (const childId of block.children || []) referenced.add(childId);
+        const cells = block.table?.cells;
+        if (Array.isArray(cells)) {
+            for (const cellId of cells) referenced.add(cellId);
+        }
+    }
+    const orphans = blocks.filter((b) => !referenced.has(b.block_id) && !state.visited.has(b.block_id));
+    if (orphans.length) {
+        ctx.onProgress?.(`检测到 ${orphans.length} 个未挂载的块，已追加补渲染`);
+        const extra = await renderChildren(orphans.map((b) => b.block_id), state);
+        if (extra) {
+            markdown = `${markdown}\n\n${extra}`;
+        }
+    }
 
     return markdown.replace(/\n{3,}/g, "\n\n").trim();
 }
