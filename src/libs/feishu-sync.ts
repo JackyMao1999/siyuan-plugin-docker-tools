@@ -5,6 +5,7 @@
 import { Plugin } from "siyuan";
 import { FeishuBlock, FeishuClient } from "./feishu-api";
 import { docxBlocksToMarkdown } from "./feishu-parser";
+import { markdownToBlockDom } from "./siyuan-dom";
 import {
     appendBlock,
     createDocWithMd,
@@ -209,6 +210,18 @@ export class FeishuSync {
         }
     }
 
+    /**
+     * 写入一批内容：优先按块 DOM 写入（dataType: "dom"），块 DOM 由思源自带 Lute 生成，
+     * 能保留高亮块（NodeCallout）等原生结构；Lute 不可用或转换失败时退回 markdown 写入。
+     */
+    private async writeChunk(parentId: string, chunk: string): Promise<boolean> {
+        const dom = markdownToBlockDom(chunk);
+        const ops = dom
+            ? await appendBlock("dom", dom, parentId)
+            : await appendBlock("markdown", chunk, parentId);
+        return !!ops;
+    }
+
     /** 清空文档原有内容并写入新的分块内容 */
     private async writeChunks(docId: string, chunks: string[]): Promise<boolean> {
         const children = await getChildBlocks(docId);
@@ -216,8 +229,7 @@ export class FeishuSync {
             await deleteBlock(child.id);
         }
         for (let i = 0; i < chunks.length; i++) {
-            const ops = await appendBlock("markdown", chunks[i], docId);
-            if (!ops) return false;
+            if (!await this.writeChunk(docId, chunks[i])) return false;
         }
         return true;
     }
@@ -321,8 +333,7 @@ export class FeishuSync {
                 docId = await createDocWithMd(options.notebook, path, chunks[0] || "");
                 if (docId) {
                     for (let i = 1; i < chunks.length; i++) {
-                        const ops = await appendBlock("markdown", chunks[i], docId);
-                        if (!ops) {
+                        if (!await this.writeChunk(docId, chunks[i])) {
                             log?.(`  ⚠️ 第 ${i + 1}/${chunks.length} 批写入失败，后续内容可能缺失`);
                             break;
                         }

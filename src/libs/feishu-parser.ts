@@ -94,54 +94,91 @@ function renderInlineMath(content: string): string {
     return /^\d/.test(formula) ? `$ ${formula} $` : `$${formula}$`;
 }
 
+/** 转义 HTML 属性值（URL 里的引号与 & 会破坏行内元素结构） */
+function escapeHtmlAttr(value: string): string {
+    return (value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+/**
+ * 渲染一段带样式的文本，统一使用思源原生的行内元素（TextMark）：
+ * - 加粗：`<span data-type="strong"></span>`
+ * - 斜体：`<span data-type="em"></span>`
+ * - 删除线：`<span data-type="s"></span>`
+ * - 高亮/着色：`<span data-type="text" style="background-color: var(--b3-font-background11);"></span>`
+ *
+ * 不再使用 `**`/`*`/`~~`：Markdown 标记紧邻 HTML 或标点（如 `**[text](url)**`）时不会被解析，
+ * 带颜色、链接的文字会丢掉加粗/斜体等样式；思源行内元素则可任意叠加（data-type 用空格分隔）。
+ */
+function renderTextRun(core: string, style: any): string {
+    if (style.inline_code) {
+        // 行内代码是字面内容，不能再套行内元素
+        return "`" + escapeMd(core) + "`";
+    }
+
+    const types: string[] = [];
+    if (style.bold) types.push("strong");
+    if (style.italic) types.push("em");
+    if (style.strikethrough) types.push("s");
+
+    const css: string[] = [];
+    const textColor = colorIndex(style.text_color);
+    if (textColor) css.push(`color: var(--b3-font-color${textColor})`);
+    const bgColor = colorIndex(style.background_color);
+    if (bgColor) css.push(`background-color: var(--b3-font-background${bgColor})`);
+
+    let url = "";
+    if (style.link?.url) {
+        try { url = decodeURIComponent(style.link.url); } catch (e) { url = style.link.url; }
+    }
+
+    if (!types.length && !css.length) {
+        // 没有需要行内元素承载的样式：下划线用 <u>，链接保持 Markdown 写法
+        let text = escapeMd(core);
+        if (style.underline) text = `<u>${text}</u>`;
+        if (url) text = `[${text}](${url})`;
+        return text;
+    }
+
+    // 下划线一并放进 data-type：行内元素内再嵌套行内元素会被当作字面文本
+    if (style.underline) types.push("u");
+    // 只有颜色/背景色时由 text 标记承载
+    if (css.length && !types.length) types.push("text");
+    // 链接叠加其它样式时用思源原生写法，否则 `[text](url)` 会被当作字面文本
+    if (url) types.unshift("a");
+
+    const attrs = [`data-type="${types.join(" ")}"`];
+    if (css.length) attrs.push(`style="${css.join("; ")};"`);
+    if (url) attrs.push(`data-href="${escapeHtmlAttr(url)}"`);
+    // 行内元素内的文本是字面内容，不能再做 Markdown 转义（否则会多出 `\`）；
+    // 只有 u 标记会把内容再按行内 Markdown 解析一次，这时仍需转义
+    const body = types.length === 1 && types[0] === "u" ? escapeMd(core) : core;
+    return `<span ${attrs.join(" ")}>${body}</span>`;
+}
+
 function inlineFrom(elements: FeishuTextElement[] | undefined): string {
     if (!elements || !elements.length) return "";
     let out = "";
     for (const el of elements) {
         if (!el) continue;
         if (el.text_run) {
-            const raw = escapeMd(el.text_run.content || "");
+            // 行内元素与链接都不能跨行，先把换行压成空格
+            const raw = (el.text_run.content || "").replace(/\r?\n/g, " ");
             if (!raw) continue;
             // 先把首尾空白摘出来，最后再拼回去：
-            // 否则 `** 加粗 **`（标记内侧有空白）在 Markdown 中不会被解析成加粗
+            // 思源解析行内元素时会把内容 TrimSpace（空白外提为相邻文本），保持原样可避免少空格
             const matched = /^(\s*)([\s\S]*?)(\s*)$/.exec(raw);
             const lead = matched ? matched[1] : "";
             const tail = matched ? matched[3] : "";
-            let core = matched ? matched[2] : raw;
+            const core = matched ? matched[2] : raw;
             if (!core) {
                 out += raw;
                 continue;
             }
-            const style: any = el.text_run.text_element_style || {};
-
-            if (style.inline_code) {
-                // 行内代码是字面内容，不能再套 HTML
-                core = "`" + core + "`";
-            } else {
-                // HTML 放在最内层，否则里面的 Markdown 标记不会被解析
-                if (style.underline) core = `<u>${core}</u>`;
-                const textColor = colorIndex(style.text_color);
-                if (textColor) {
-                    core = `<span style="color: var(--b3-font-color${textColor})">${core}</span>`;
-                }
-                const bgColor = colorIndex(style.background_color);
-                if (bgColor) {
-                    core = `<span style="background-color: var(--b3-font-background${bgColor})">${core}</span>`;
-                }
-            }
-
-            // Markdown 行内标记放在最外层
-            if (style.bold) core = `**${core}**`;
-            if (style.italic) core = `*${core}*`;
-            if (style.strikethrough) core = `~~${core}~~`;
-
-            const link = style.link?.url;
-            if (link) {
-                let url = link;
-                try { url = decodeURIComponent(link); } catch (e) { /* ignore */ }
-                core = `[${core}](${url})`;
-            }
-            out += lead + core + tail;
+            out += lead + renderTextRun(core, el.text_run.text_element_style || {}) + tail;
         } else if (el.equation) {
             out += renderInlineMath(el.equation.content || "");
         } else if (el.mention_user) {
@@ -170,6 +207,26 @@ function prefixLines(text: string, prefix: string): string {
         .split("\n")
         .map((line) => (line ? prefix + line : line))
         .join("\n");
+}
+
+/**
+ * 飞书高亮块背景色 -> 思源高亮块类型（图标与标题用思源该类型的默认值）。
+ * 飞书 CalloutBackgroundColor：1 红 / 2 橙 / 3 黄 / 4 绿 / 5 蓝 / 6 紫 / 7 灰
+ */
+const CALLOUT_TYPE: Record<number, string> = {
+    1: "WARNING",
+    2: "CAUTION",
+    3: "TIP",
+    4: "TIP",
+    5: "NOTE",
+    6: "IMPORTANT",
+    7: "NOTE",
+};
+
+/** 渲染引述内容：思源要求每一行都带 `>`，空行用 `>` 占位（否则会被当作引述结束） */
+function quoteLines(lines: string[], prefix = ""): string {
+    const quoted = lines.map((line) => (line ? "> " + line : ">"));
+    return prefixLines(quoted.join("\n"), prefix);
 }
 
 /** 渲染一组子块 */
@@ -247,7 +304,6 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
 
     switch (type) {
         case 1: // 页面（根块）
-        case 19: // 高亮块
         case 24: // 分栏
         case 25: // 分栏列
         case 32: // 表格单元格
@@ -291,12 +347,29 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             const code = elements.map((el) => el?.text_run?.content || "").join("");
             return prefixLines("```" + lang + "\n" + code + "\n```", prefix);
         }
-        case 15: { // 引用
+        case 15: { // 引用 -> 思源引用块（NodeBlockquote，内部是 NodeParagraph）
             const text = inlineFrom(elements);
             const child = await renderChildren(block.children, state, "");
             const content = [text, child].filter(Boolean).join("\n");
             if (!content) return "";
-            return prefixLines(content.split("\n").map((line) => "> " + line).join("\n"), prefix);
+            const lines = content.split("\n");
+            // `[!xxx]` 开头会被思源识别成高亮块，转义首个 `[` 保持普通引用
+            if (/^\[!/.test(lines[0])) {
+                lines[0] = "\\" + lines[0];
+            }
+            return quoteLines(lines, prefix);
+        }
+        case 19: { // 高亮块 -> 思源高亮块（NodeCallout）
+            const calloutType = CALLOUT_TYPE[Number(block.callout?.background_color) || 0] || "NOTE";
+            const text = inlineFrom(elements);
+            const child = await renderChildren(block.children, state, "");
+            const content = [text, child].filter(Boolean).join("\n");
+            const lines = content ? content.split("\n") : [];
+            if (!lines.length) {
+                // 只有标记行、没有正文时思源会把它降级成普通引用，补一个空行占位
+                lines.push("");
+            }
+            return quoteLines([`[!${calloutType}]`, ...lines], prefix);
         }
         case 16: { // 公式块 -> 独立成段的行内公式
             const content = block.equation?.content || inlineFrom(elements);
