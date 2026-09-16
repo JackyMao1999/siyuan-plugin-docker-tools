@@ -427,28 +427,31 @@
     word-break: break-all;
 }
 
-/* 插件设置面板的 tab 切换条（由 SettingUtils.addTabs 添加） */
-.plugin-setting__tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    width: 100%;
-    margin-bottom: 4px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--b3-border-color);
+/* 插件设置面板：左侧 tab 导航 + 右侧内容（复用思源原生 config__side / config__tab-wrap 样式） */
+.plugin-setting__layout {
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+    align-items: stretch;
 }
 
-.plugin-setting__tab {
-    cursor: pointer;
+.plugin-setting__layout .config__side {
+    flex: 0 0 auto;
 }
 
-.plugin-setting__tab--active {
-    background: var(--b3-theme-primary);
-    border-color: var(--b3-theme-primary);
-    color: var(--b3-theme-on-primary);
+/* tab 内容区：原生 .config__tab-container 自带 margin/padding，这里只负责滚动 */
+.plugin-setting__layout .config__tab-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
-/* 插件设置面板的分组标题（由 SettingUtils.addSection 添加） */
+.plugin-setting__layout .config__tab-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+}
+
+/* 分组标题下方的分隔线（由 SettingUtils.addSection 添加） */
 .plugin-setting__section-row {
     margin-top: 16px;
     padding-top: 12px;
