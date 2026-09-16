@@ -60,6 +60,13 @@ interface ParserState {
     map: Map<string, FeishuBlock>;
     /** 已渲染过的块，用于兜底补渲染 */
     visited: Set<string>;
+    /** 本次解析中未能完整转换的内容，最后汇总到同步日志 */
+    issues: string[];
+}
+
+/** 记录一处未能转换的内容（同一类只记一次，最后按数量汇总） */
+function noteIssue(state: ParserState, label: string): void {
+    state.issues.push(label);
 }
 
 /**
@@ -330,6 +337,20 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
     state.visited.add(block.block_id);
     const { elements, style } = getTextContent(block);
 
+    // 画板类内容（mermaid / 流程图 / 画板）统一按 board.token 导出为图片：
+    // 不同飞书版本会把它挂在 43(board)、21(diagram) 等块类型上，这里先按 token 处理，失败再走各自分支
+    const boardToken: string = block.board?.token || "";
+    let boardFailed = false;
+    if (boardToken && state.ctx.resolveBoard) {
+        try {
+            const path = await state.ctx.resolveBoard(block);
+            if (path) return prefix + `![mermaid 画板](${path})`;
+            boardFailed = true;
+        } catch (e) {
+            boardFailed = true;
+        }
+    }
+
     switch (type) {
         case 1: // 页面（根块）
         case 24: // 分栏
@@ -422,6 +443,7 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
                     console.warn("下载飞书附件失败：", e);
                 }
             }
+            noteIssue(state, "附件未能本地化（只保留文件名）");
             return prefix + `📎 ${escapeMd(name)}`;
         }
         case 26: { // 内嵌网页
@@ -443,6 +465,7 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
                 }
             }
             if (!imageMd) {
+                noteIssue(state, "图片未能同步");
                 imageMd = `> ⚠️ 图片未能同步${caption ? "：" + caption : ""}`;
             } else if (caption) {
                 imageMd += `\n\n${prefix}*${caption}*`;
@@ -453,30 +476,34 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             return renderTable(block, state, prefix);
         }
         case 18: {
+            noteIssue(state, "多维表格不支持同步");
             return prefix + `> ⚠️ 多维表格暂不支持同步（token: ${block.bitable?.token || ""}）`;
         }
         case 20: {
+            noteIssue(state, "群名片块不支持同步");
             return prefix + `> 群名片块暂不支持同步`;
         }
         case 21: {
+            if (boardToken) {
+                noteIssue(state, "流程图 / UML 图未能同步");
+                return prefix + `> ⚠️ 流程图 / UML 图未能同步（token: ${boardToken}，详见同步日志）`;
+            }
+            noteIssue(state, "流程图 / UML 图不支持同步");
             return prefix + `> ⚠️ 流程图 / UML 图暂不支持同步（飞书未提供可导出的 token）`;
         }
-        case 43: { // 画板（mermaid / 流程图等）-> 用 board.token 导出为图片
-            const boardToken = block.board?.token || "";
-            if (boardToken && state.ctx.resolveBoard) {
-                try {
-                    const path = await state.ctx.resolveBoard(block);
-                    if (path) return prefix + `![mermaid 画板](${path})`;
-                } catch (e) {
-                    console.warn("下载飞书画板图片失败：", e);
-                }
-            }
-            return prefix + `> ⚠️ 画板（mermaid / 流程图）未能同步${boardToken ? `（token: ${boardToken}）` : ""}`;
+        case 43: { // 画板（mermaid / 流程图等）：上面已按 board.token 尝试导出为图片
+            noteIssue(state, "画板 / mermaid 未能同步");
+            const reason = !state.ctx.resolveBoard
+                ? "（未勾选「同步图片/附件/画板」）"
+                : boardFailed ? "（导出或写入失败，详见同步日志）" : "（该块没有 board.token）";
+            return prefix + `> ⚠️ 画板（mermaid / 流程图）未能同步${boardToken ? `（token: ${boardToken}）` : ""}${reason}`;
         }
         case 29: {
+            noteIssue(state, "思维笔记不支持同步");
             return prefix + `> 思维笔记暂不支持同步`;
         }
         case 30: {
+            noteIssue(state, "电子表格不支持同步");
             return prefix + `> 电子表格暂不支持同步（token: ${block.sheet?.token || ""}）`;
         }
         case 42: {
@@ -487,6 +514,7 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             if (block.children?.length) {
                 return renderChildren(block.children, state, prefix);
             }
+            noteIssue(state, `不支持的块（类型 ${type}）`);
             const hint = block.text?.elements ? inlineFrom(block.text.elements) : "";
             return prefix + `> ⚠️ 暂不支持的块（类型 ${type}）${hint ? "：" + hint : ""}`;
         }
@@ -502,7 +530,7 @@ export async function docxBlocksToMarkdown(blocks: FeishuBlock[], ctx: ParseCont
     for (const block of blocks) {
         map.set(block.block_id, block);
     }
-    const state: ParserState = { ctx, map, visited: new Set<string>() };
+    const state: ParserState = { ctx, map, visited: new Set<string>(), issues: [] };
 
     // 找到根块（页面块，或没有父块的块）
     const root = blocks.find((b) => b.block_type === 1) || blocks.find((b) => !b.parent_id || !map.has(b.parent_id));
@@ -537,6 +565,18 @@ export async function docxBlocksToMarkdown(blocks: FeishuBlock[], ctx: ParseCont
     const segments = finalMarkdown.split(/\n{2,}/).filter((s) => s.trim()).length;
     if (contentBlocks >= 5 && segments <= 2) {
         ctx.onProgress?.(`⚠️ 自检：解析到 ${contentBlocks} 个内容块，但只渲染出 ${segments} 段，可能存在解析异常`);
+    }
+
+    // 未转换内容汇总：正文里是占位提示，日志里给出分类与数量，方便判断问题范围
+    if (state.issues.length) {
+        const counts = new Map<string, number>();
+        for (const issue of state.issues) {
+            counts.set(issue, (counts.get(issue) || 0) + 1);
+        }
+        const detail = Array.from(counts)
+            .map(([label, count]) => (count > 1 ? `${label} ×${count}` : label))
+            .join("；");
+        ctx.onProgress?.(`  ⚠️ 共 ${state.issues.length} 处内容未能完整转换：${detail}`);
     }
 
     return finalMarkdown;

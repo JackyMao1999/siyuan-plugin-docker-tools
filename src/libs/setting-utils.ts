@@ -82,6 +82,9 @@ export class SettingUtils {
 
     settings: Map<string, ISettingUtilsItem> = new Map();
     elements: Map<string, HTMLElement> = new Map();
+    /** 分组标题的 key（只用于界面分区，不写入配置文件） */
+    private sectionKeys = new Set<string>();
+    private sectionSeq = 0;
 
     constructor(args: {
         plugin: Plugin,
@@ -234,9 +237,40 @@ export class SettingUtils {
         let data: any = {};
         for (let [key, item] of this.settings) {
             if (item.type === 'button') continue;
+            if (this.sectionKeys.has(key)) continue;
             data[key] = item.value;
         }
         return data;
+    }
+
+    /**
+     * 添加一个分组标题：把设置面板按功能点分区，避免所有项挤在一列里分不清归属
+     * @param title 分组名称，例如「飞书知识库同步」
+     * @param description 该分组管什么，显示在标题后面
+     */
+    addSection(title: string, description = "") {
+        const key = `__section__${++this.sectionSeq}`;
+        this.sectionKeys.add(key);
+        this.addItem({
+            key,
+            title,
+            description,
+            type: 'custom',
+            direction: 'column',
+            value: '',
+            createElement: () => {
+                const element = document.createElement('div');
+                element.className = 'plugin-setting__section-divider';
+                // 元素插入设置面板后再给「整行」打标记：标题加粗 + 顶部分隔线
+                setTimeout(() => {
+                    const row = (element.closest('.b3-label') || element.parentElement) as HTMLElement | null;
+                    row?.classList.add('plugin-setting__section-row');
+                }, 0);
+                return element;
+            },
+            getEleVal: () => null,
+            setEleVal: () => { /* 分组标题不参与配置读写 */ },
+        });
     }
 
     addItem(item: ISettingUtilsItem) {

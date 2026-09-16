@@ -1,7 +1,7 @@
 {
-    "helloPlugin": "Document Print Tool loaded",
-    "byePlugin": "Document Print Tool unloaded",
-    "topBarTitle": "Print & PDF Export",
+    "helloPlugin": "Docker Tools loaded",
+    "byePlugin": "Docker Tools unloaded",
+    "topBarTitle": "Docker Tools",
     "printDoc": "Print Document",
     "exportPdf": "Export PDF",
     "openSettings": "Open Settings",

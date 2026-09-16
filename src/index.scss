@@ -426,3 +426,21 @@
     white-space: pre-wrap;
     word-break: break-all;
 }
+
+/* 插件设置面板的分组标题（由 SettingUtils.addSection 添加） */
+.plugin-setting__section-row {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--b3-border-color);
+    font-weight: 600;
+}
+
+.plugin-setting__section-row .b3-label__text,
+.plugin-setting__section-row .b3-label__helper {
+    font-weight: 400;
+    color: var(--b3-theme-on-surface);
+}
+
+.plugin-setting__section-divider {
+    display: none;
+}

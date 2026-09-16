@@ -249,9 +249,10 @@ export const getFileBlob = async (path: string): Promise<Blob | null> => {
  * （空操作成功），调用方就会静默拿到 null，表现为图片/附件/画板全部「未能同步」。
  *
  * @param file 文件对象
- * @returns 上传成功后的资源相对路径（形如 assets/xxx.png），失败返回 null
+ * @returns 上传成功后的资源相对路径（形如 assets/xxx.png）
+ * @throws 失败时抛出带原因的 Error（调用方据此写入同步日志，不再静默失败）
  */
-export async function uploadAsset(file: File): Promise<string | null> {
+export async function uploadAsset(file: File): Promise<string> {
     const formData = new FormData();
     formData.append("assetsDirPath", "/assets/");
     formData.append("file[]", file, file.name);
@@ -262,33 +263,31 @@ export async function uploadAsset(file: File): Promise<string | null> {
         headers["Authorization"] = `Token ${token}`;
     }
 
+    let res: any;
     try {
         const response = await fetch("/api/asset/upload", {
             method: "POST",
             headers,
             body: formData,
         });
-        const res = await response.json();
-        if (res.code !== 0) {
-            console.error("上传资源失败:", res.msg);
-            return null;
-        }
-        const succMap: IResUpload["succMap"] = res.data?.succMap || {};
-        const errFiles: string[] = res.data?.errFiles || [];
-        const keys = Object.keys(succMap);
-        if (!keys.length) {
-            // 内核「没收到文件」也会返回 code=0，必须显式报错，避免素材静默丢失
-            console.error("上传资源失败：内核未接收文件（multipart 字段名需为 file[]）", errFiles);
-            return null;
-        }
-        if (errFiles.length) {
-            console.warn("部分资源上传失败:", errFiles);
-        }
-        return succMap[keys[0]];
+        res = await response.json();
     } catch (e) {
-        console.error("上传资源异常:", e);
-        return null;
+        throw new Error(`思源资源接口请求失败：${e instanceof Error ? e.message : String(e)}`);
     }
+    if (res.code !== 0) {
+        throw new Error(`思源拒绝写入资源：${res.msg || "未知错误"}`);
+    }
+    const succMap: IResUpload["succMap"] = res.data?.succMap || {};
+    const errFiles: string[] = res.data?.errFiles || [];
+    const keys = Object.keys(succMap);
+    if (!keys.length) {
+        // 内核「没收到文件」也会返回 code=0，必须显式报错，避免素材静默丢失
+        throw new Error(`内核未接收文件（multipart 字段名需为 file[]）${errFiles.length ? "：" + errFiles.join("、") : ""}`);
+    }
+    if (errFiles.length) {
+        console.warn("部分资源上传失败:", errFiles);
+    }
+    return succMap[keys[0]];
 }
 
 // **************************************** Notification ****************************************

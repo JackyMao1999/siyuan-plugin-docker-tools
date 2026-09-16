@@ -160,6 +160,8 @@ export default class DocExportPlugin extends Plugin {
     }
 
     private initSettings() {
+        this.settingUtils.addSection("通用", "帮助与使用向导");
+
         this.settingUtils.addItem({
             key: "help",
             value: "",
@@ -171,6 +173,8 @@ export default class DocExportPlugin extends Plugin {
                 callback: () => this.openHelp()
             }
         });
+
+        this.settingUtils.addSection("导出 PDF / 打印", "影响「导出 PDF」「打印文档」的排版与输出效果");
 
         this.settingUtils.addItem({
             key: "pageSize",
@@ -323,6 +327,8 @@ export default class DocExportPlugin extends Plugin {
             },
             action: { callback: () => this.settingUtils.takeAndSave("exportMethod") }
         });
+
+        this.settingUtils.addSection("飞书知识库同步", "配置飞书应用凭据、访问身份与用户授权");
 
         this.settingUtils.addItem({
             key: "feishuDomain",

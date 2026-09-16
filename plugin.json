@@ -22,8 +22,8 @@
     "docker"
   ],
   "displayName": {
-    "default": "siyuan-plugin-docker-tools",
-    "en_US": "siyuan-plugin-docker-tools",
+    "default": "Docker端工具集",
+    "en_US": "Docker Tools",
     "zh_CN": "Docker端工具集"
   },
   "description": {

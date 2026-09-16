@@ -160,6 +160,8 @@ export class FeishuSync {
     private assetsCache = new Map<string, string | null>();
     /** 当前文档素材同步失败的原因（每个文档开始同步时清空） */
     private assetFailures: string[] = [];
+    /** 当前文档的日志回调（由 buildMarkdown 设置，供素材下载等内部步骤写日志） */
+    private currentLog?: (msg: string) => void;
 
     constructor(plugin: Plugin, client: FeishuClient) {
         this.plugin = plugin;
@@ -247,6 +249,7 @@ export class FeishuSync {
             return this.assetsCache.get(cacheKey);
         }
         let path: string | null = null;
+        const label = kind === "board" ? "画板（mermaid / 流程图）" : "素材";
         try {
             const media = kind === "board"
                 ? await this.client.downloadBoardImage(token)
@@ -256,13 +259,12 @@ export class FeishuSync {
             const blob = base64ToBlob(media.base64, media.contentType);
             const file = new File([blob], sanitizeTitle(fileName), { type: media.contentType });
             path = await uploadAsset(file);
-            if (!path) {
-                this.assetFailures.push(`写入思源资源失败（${sanitizeTitle(fileName)}）`);
-            }
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            this.assetFailures.push(message);
-            console.warn(`下载飞书素材失败 (${token}):`, e);
+            this.assetFailures.push(`${label}：${message}`);
+            // 逐条写入同步日志：正文里只会留占位提示，日志里要能直接看到失败原因
+            this.currentLog?.(`  ✘ ${label}同步失败（token: ${token}）：${message}`);
+            console.warn(`同步飞书${label}失败 (${token}):`, e);
         }
         this.assetsCache.set(cacheKey, path);
         return path;
@@ -273,7 +275,11 @@ export class FeishuSync {
         let markdown = "";
         let blockCount = 0;
         this.assetFailures = [];
+        this.currentLog = log;
         if (item.objType === "docx") {
+            if (!options.syncAssets) {
+                log?.("提示：「同步图片/附件/画板」未勾选，图片、附件、画板只会留下占位提示。");
+            }
             const blocks: FeishuBlock[] = await this.client.getDocxBlocks(item.objToken);
             blockCount = blocks.length;
             markdown = await docxBlocksToMarkdown(blocks, {
@@ -283,7 +289,7 @@ export class FeishuSync {
                 resolveFile: options.syncAssets
                     ? async (block: FeishuBlock) => this.resolveAsset(block.file?.token, block.file?.name)
                     : undefined,
-                // 画板（mermaid/流程图）用 board.token 走画板导出接口换取图片
+                // 画板 / mermaid / 流程图：用 board.token 走画板导出接口换取图片
                 resolveBoard: options.syncAssets
                     ? async (block: FeishuBlock) => this.resolveAsset(block.board?.token, `${block.board?.token || "board"}.png`, "board")
                     : undefined,
@@ -298,11 +304,12 @@ export class FeishuSync {
 
         // 素材失败原因写进同步日志，避免只看得到正文里的占位提示却不知道原因
         if (this.assetFailures.length) {
-            const reasons = Array.from(new Set(this.assetFailures)).slice(0, 3).join("；");
-            log?.(`  ⚠️ ${this.assetFailures.length} 个素材未能写入思源：${reasons}`);
-            if (this.assetFailures.some((reason) => /99991679|re-authorization|用户授权/.test(reason))) {
-                log?.("  提示：当前用户身份缺少新增权限（如 board:whiteboard:node:read），"
-                    + "请在「插件设置 → 飞书用户授权」中重新授权后再同步。");
+            const unique = Array.from(new Set(this.assetFailures));
+            log?.(`  ⚠️ ${this.assetFailures.length} 处素材未能写入思源（${unique.length} 种原因，详见上面的 ✘ 行）`);
+            const hint = unique.find((reason) => /99991679|re-authorization|用户授权|board:whiteboard/.test(reason));
+            if (hint) {
+                log?.("  → 画板 / mermaid 需要用户身份重新授权：飞书后台开通 board:whiteboard:node:read 并发布版本后，"
+                    + "到「插件设置 → 飞书用户授权」点「① 打开授权页面」重新授权。");
             }
         }
 

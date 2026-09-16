@@ -1,7 +1,7 @@
 {
-    "helloPlugin": "文档打印工具已加载",
-    "byePlugin": "文档打印工具已卸载",
-    "topBarTitle": "文档打印与PDF导出",
+    "helloPlugin": "Docker端工具集已加载",
+    "byePlugin": "Docker端工具集已卸载",
+    "topBarTitle": "Docker端工具集",
     "printDoc": "打印文档",
     "exportPdf": "导出 PDF",
     "openSettings": "打开设置",
