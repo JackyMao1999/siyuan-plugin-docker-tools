@@ -69,7 +69,7 @@
     "feishuNotebook": "Target Notebook",
     "feishuRootPath": "Root Path",
     "feishuRecursive": "Recursive",
-    "feishuAssets": "Sync images/files",
+    "feishuAssets": "Sync images/files/boards",
     "feishuIncremental": "Incremental",
     "feishuAddSource": "Add source link",
     "feishuStartSync": "Start Sync",

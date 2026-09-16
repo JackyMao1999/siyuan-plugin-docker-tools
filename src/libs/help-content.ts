@@ -9,6 +9,7 @@ const FEISHU_SCOPES = [
     "docx:document:readonly",
     "drive:drive:readonly",
     "docs:document:readonly",
+    "board:whiteboard:node:read",
 ].join("\n");
 
 const LINK_STYLE = 'style="color:var(--b3-theme-primary);text-decoration:underline;"';
@@ -61,6 +62,7 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <tr><td><code>docx:document:readonly</code></td><td>✅ 必需</td><td>读取新版文档（docx）的正文内容</td></tr>
 <tr><td><code>drive:drive:readonly</code></td><td>✅ 必需</td><td>浏览云文档文件夹、下载文档中的图片与附件</td></tr>
 <tr><td><code>docs:document.content:read</code></td><td>⭕ 可选</td><td>同步旧版文档（只能取纯文本）</td></tr>
+<tr><td><code>board:whiteboard:node:read</code></td><td>⭕ 可选</td><td>把文档里的画板 / mermaid 图导出为图片一并同步</td></tr>
 </tbody>
 </table>
 <p><b>开通后一定要发布版本</b>：左侧 <b>版本管理与发布</b> → 创建版本 → 申请发布。（若企业开启了应用管控，需要管理员审核通过。）</p>
@@ -105,7 +107,7 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <tr><td>知识空间</td><td>选择要同步的知识库（只在 Wiki 来源下显示）</td></tr>
 <tr><td>目标笔记本 / 根路径</td><td>同步到哪个笔记本、放在该笔记本下的哪个目录</td></tr>
 <tr><td>递归子文档</td><td>勾选后连同下级子文档一起同步，并保留层级结构</td></tr>
-<tr><td>同步图片 / 附件</td><td>把图片、附件下载到思源并本地化（需要 <code>drive:drive:readonly</code>）</td></tr>
+<tr><td>同步图片 / 附件 / 画板</td><td>把图片、附件下载到思源并本地化（需要 <code>drive:drive:readonly</code>）；文档里的画板 / mermaid 图会导出为图片（需要 <code>board:whiteboard:node:read</code>）</td></tr>
 <tr><td>增量同步</td><td>飞书里没改动过的文档自动跳过，速度更快</td></tr>
 <tr><td>添加来源</td><td>在文档开头加一行来源信息</td></tr>
 </tbody>
@@ -187,8 +189,9 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <dt>同步报权限错误（如 401 / 无权限访问）</dt>
 <dd>检查 <code>wiki:wiki:readonly</code>、<code>docx:document:readonly</code>、<code>drive:drive:readonly</code> 是否都已开通，并且应用版本已发布。</dd>
 
-<dt>图片没有同步，只留下一行提示</dt>
-<dd>通常是缺少 <code>drive:drive:readonly</code> 权限，或该图片未被授权给应用。文字内容不受影响。</dd>
+<dt>图片 / 画板（mermaid）没有同步，只留下一行提示</dt>
+<dd>图片、附件通常是缺少 <code>drive:drive:readonly</code> 权限，或该素材未被授权给应用；
+画板 / mermaid 图需要 <code>board:whiteboard:node:read</code> 权限（未开通时会留一行 token 提示）。文字内容不受影响。</dd>
 
 <dt>旧版文档同步后变成纯文本</dt>
 <dd>旧版文档（doc）接口只能取纯文本。建议在飞书中把文档升级为「新版文档」后再同步。</dd>
@@ -213,7 +216,8 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 添加一个地址，例如 <code>http://localhost:8080/feishu-callback</code>（这个地址不需要真的能打开）。
 <br>更省事的做法：在授权对话框里点 <b>「打开后台配置页」</b> 直达该页面，点 <b>「复制」</b> 把地址复制过去。</li>
 <li>确认应用已申请 <code>wiki:wiki:readonly</code>、<code>docx:document:readonly</code>、<code>drive:drive:readonly</code>
-权限并已发布版本（用户授权同样需要这些权限）。</li>
+权限并已发布版本（用户授权同样需要这些权限）；
+如需同步画板 / mermaid 图，还要申请 <code>board:whiteboard:node:read</code>。</li>
 <li>思源插件设置中：<b>飞书访问身份</b> 改为「用户身份」；
 <b>授权回调地址</b> 填第 1 步配置的那个地址（必须<b>完全一致</b>）。</li>
 <li>点击设置中的 <b>打开授权 / 授权管理</b> → 点「① 打开授权页面」在浏览器登录并同意授权。</li>
@@ -228,6 +232,11 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <br>解决：到 <b>开发配置 → 安全设置 → 重定向 URL</b> 把对话框里显示的地址<b>原样</b>添加进去并保存/发布；
 同时确认插件里的 App ID 就是配置该地址的那个应用。配置好后重新点「打开授权页面」。
 <br>提示：若回调地址带 <code>?</code> 或 <code>#</code>，后台只需配置到它们之前的部分。</dd>
+<dt>报错 99991679（提示「请重新授权」）</dt>
+<dd>用户身份缺少某个权限，常见于后来新增的 <code>board:whiteboard:node:read</code>（画板 / mermaid 导出）。
+用户身份下「应用开通了权限」还不够，必须由你重新授权带上该范围：
+先在飞书后台「权限管理」申请该权限并<b>发布版本</b>，再到「插件设置 → 飞书用户授权」点 <b>① 打开授权页面</b> 重新走一遍授权即可
+（授权对话框会自动把新权限并进授权范围）。</dd>
 <dt>报错 20027</dt>
 <dd>授权链接里包含了应用「没有申请」的权限。请在飞书后台补齐权限，或减少授权范围后重试。</dd>
 <dt>报错 invalid_grant / 授权码无效</dt>

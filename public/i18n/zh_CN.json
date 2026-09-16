@@ -69,7 +69,7 @@
     "feishuNotebook": "目标笔记本",
     "feishuRootPath": "根路径",
     "feishuRecursive": "递归子文档",
-    "feishuAssets": "同步图片/附件",
+    "feishuAssets": "同步图片/附件/画板",
     "feishuIncremental": "增量同步",
     "feishuAddSource": "添加来源",
     "feishuStartSync": "开始同步",

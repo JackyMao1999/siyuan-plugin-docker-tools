@@ -49,6 +49,8 @@ export interface ParseContext {
     resolveImage?: (block: FeishuBlock) => Promise<string | null>;
     /** 附件块 -> 思源资源相对路径，返回 null 表示未能本地化 */
     resolveFile?: (block: FeishuBlock) => Promise<string | null>;
+    /** 画板块（mermaid / 流程图）-> 思源资源相对路径，返回 null 表示未能本地化 */
+    resolveBoard?: (block: FeishuBlock) => Promise<string | null>;
     /** 进度回调 */
     onProgress?: (message: string) => void;
 }
@@ -195,6 +197,19 @@ function inlineFrom(elements: FeishuTextElement[] | undefined): string {
     return out;
 }
 
+/**
+ * 图片题注文本：官方结构中 `caption.content` 是纯文本字符串，
+ * 但部分接口返回的是富文本元素数组，两种都兼容（旧实现直接把字符串交给 inlineFrom，题注会被丢掉）
+ */
+function captionText(caption: any): string {
+    const content = caption?.content;
+    if (!content) return "";
+    if (typeof content === "string") {
+        return content.replace(/\s*\n\s*/g, " ").trim();
+    }
+    return inlineFrom(content);
+}
+
 function getTextContent(block: FeishuBlock): { elements: FeishuTextElement[]; style: any } {
     const key = TEXT_BLOCK_KEYS[block.block_type];
     const data = key ? block[key] : undefined;
@@ -227,6 +242,19 @@ const CALLOUT_TYPE: Record<number, string> = {
 function quoteLines(lines: string[], prefix = ""): string {
     const quoted = lines.map((line) => (line ? "> " + line : ">"));
     return prefixLines(quoted.join("\n"), prefix);
+}
+
+/**
+ * 把整段内容包成思源的引述块（NodeBlockquote）。
+ * 首行以 `[!xxx]` 开头时思源会把它识别成高亮块，转义首个 `[` 保持普通引述。
+ */
+function wrapAsQuote(content: string, prefix = ""): string {
+    if (!content || !content.trim()) return "";
+    const lines = content.split("\n");
+    if (/^\[!/.test(lines[0])) {
+        lines[0] = "\\" + lines[0];
+    }
+    return quoteLines(lines, prefix);
 }
 
 /** 渲染一组子块 */
@@ -306,8 +334,7 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
         case 1: // 页面（根块）
         case 24: // 分栏
         case 25: // 分栏列
-        case 32: // 表格单元格
-        case 34: { // 引用容器
+        case 32: { // 表格单元格
             return renderChildren(block.children, state, prefix);
         }
         case 2: { // 段落
@@ -347,17 +374,14 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             const code = elements.map((el) => el?.text_run?.content || "").join("");
             return prefixLines("```" + lang + "\n" + code + "\n```", prefix);
         }
-        case 15: { // 引用 -> 思源引用块（NodeBlockquote，内部是 NodeParagraph）
+        case 15: { // 引用（旧版）-> 思源引述块（NodeBlockquote，内部是 NodeParagraph）
             const text = inlineFrom(elements);
             const child = await renderChildren(block.children, state, "");
-            const content = [text, child].filter(Boolean).join("\n");
-            if (!content) return "";
-            const lines = content.split("\n");
-            // `[!xxx]` 开头会被思源识别成高亮块，转义首个 `[` 保持普通引用
-            if (/^\[!/.test(lines[0])) {
-                lines[0] = "\\" + lines[0];
-            }
-            return quoteLines(lines, prefix);
+            return wrapAsQuote([text, child].filter(Boolean).join("\n"), prefix);
+        }
+        case 34: { // 引用容器（新版引用块，内容全在 children）-> 思源引述块
+            const child = await renderChildren(block.children, state, "");
+            return wrapAsQuote(child, prefix);
         }
         case 19: { // 高亮块 -> 思源高亮块（NodeCallout）
             const calloutType = CALLOUT_TYPE[Number(block.callout?.background_color) || 0] || "NOTE";
@@ -407,8 +431,8 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             try { decoded = decodeURIComponent(url); } catch (e) { /* ignore */ }
             return prefix + `[${escapeMd(decoded)}](${decoded})`;
         }
-        case 27: { // 图片
-            const caption = inlineFrom(block.image?.caption?.content);
+        case 27: { // 图片（token 取原始图片）
+            const caption = captionText(block.image?.caption);
             let imageMd = "";
             if (state.ctx.resolveImage) {
                 try {
@@ -435,7 +459,19 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             return prefix + `> 群名片块暂不支持同步`;
         }
         case 21: {
-            return prefix + `> 流程图 / UML 图暂不支持同步`;
+            return prefix + `> ⚠️ 流程图 / UML 图暂不支持同步（飞书未提供可导出的 token）`;
+        }
+        case 43: { // 画板（mermaid / 流程图等）-> 用 board.token 导出为图片
+            const boardToken = block.board?.token || "";
+            if (boardToken && state.ctx.resolveBoard) {
+                try {
+                    const path = await state.ctx.resolveBoard(block);
+                    if (path) return prefix + `![mermaid 画板](${path})`;
+                } catch (e) {
+                    console.warn("下载飞书画板图片失败：", e);
+                }
+            }
+            return prefix + `> ⚠️ 画板（mermaid / 流程图）未能同步${boardToken ? `（token: ${boardToken}）` : ""}`;
         }
         case 29: {
             return prefix + `> 思维笔记暂不支持同步`;

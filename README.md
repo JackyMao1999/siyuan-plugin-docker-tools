@@ -48,6 +48,8 @@ dialog → `Finish`. See the built-in **Help** (search "user identity") for deta
    - `docx:document:readonly`
    - `drive:drive:readonly`
    - `docs:document:readonly` (only for legacy docs)
+   - `board:whiteboard:node:read` (only if you want boards / mermaid diagrams exported as images;
+     also required when using user-identity auth, and you must re-authorize for it to take effect)
 3. Share the target Wiki space / document with the app (add the bot as a collaborator).
 4. Open the plugin **Settings** in SiYuan, fill in `Feishu App ID` / `Feishu App Secret`, and choose the domain (feishu.cn or Lark).
 5. Click the plugin icon in the top bar → **Feishu Knowledge Base Sync**, or use the command / shortcut `Ctrl+Alt+F`.

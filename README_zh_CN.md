@@ -49,6 +49,8 @@
    - `docx:document:readonly`（查看新版文档）
    - `drive:drive:readonly`（查看云文档，图片/附件下载也依赖此权限）
    - 如需同步旧版文档，额外开通 `docs:document:readonly`
+   - 如需把文档里的画板 / mermaid 图导出为图片，额外开通 `board:whiteboard:node:read`
+     （用户身份授权时同样需要，且要重新授权一次才会生效，否则接口报 99991679）
 3. 在飞书中将目标知识库/文档授权给该应用（应用机器人需加入对应知识空间或文档协作者）。
 4. 在思源中打开 **插件设置**，填写 `飞书 App ID`、`飞书 App Secret`，并按需选择 `飞书域名`（国内版 feishu.cn / 国际版 Lark）。
 5. 点击顶栏插件图标 → **飞书知识库同步**（或使用命令 `飞书知识库同步` / 快捷键 `Ctrl+Alt+F`）。

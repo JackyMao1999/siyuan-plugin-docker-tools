@@ -158,6 +158,8 @@ export class FeishuSync {
     private client: FeishuClient;
     private records: Record<string, FeishuSyncRecord> = {};
     private assetsCache = new Map<string, string | null>();
+    /** 当前文档素材同步失败的原因（每个文档开始同步时清空） */
+    private assetFailures: string[] = [];
 
     constructor(plugin: Plugin, client: FeishuClient) {
         this.plugin = plugin;
@@ -234,24 +236,35 @@ export class FeishuSync {
         return true;
     }
 
-    /** 下载飞书素材并上传到思源资源目录，返回资源相对路径 */
-    private async resolveAsset(token: string, name: string): Promise<string | null> {
+    /**
+     * 下载飞书素材并上传到思源资源目录，返回资源相对路径
+     * @param kind media = 图片/附件（drive medias 接口）；board = 画板（导出为图片）
+     */
+    private async resolveAsset(token: string, name: string, kind: "media" | "board" = "media"): Promise<string | null> {
         if (!token) return null;
-        if (this.assetsCache.has(token)) {
-            return this.assetsCache.get(token);
+        const cacheKey = `${kind}:${token}`;
+        if (this.assetsCache.has(cacheKey)) {
+            return this.assetsCache.get(cacheKey);
         }
         let path: string | null = null;
         try {
-            const media = await this.client.downloadMedia(token);
-            const ext = extFromContentType(media.contentType, ".bin");
+            const media = kind === "board"
+                ? await this.client.downloadBoardImage(token)
+                : await this.client.downloadMedia(token);
+            const ext = extFromContentType(media.contentType, kind === "board" ? ".png" : ".bin");
             const fileName = name && /\.[a-z0-9]+$/i.test(name) ? name : `${token}${ext}`;
             const blob = base64ToBlob(media.base64, media.contentType);
             const file = new File([blob], sanitizeTitle(fileName), { type: media.contentType });
             path = await uploadAsset(file);
+            if (!path) {
+                this.assetFailures.push(`写入思源资源失败（${sanitizeTitle(fileName)}）`);
+            }
         } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            this.assetFailures.push(message);
             console.warn(`下载飞书素材失败 (${token}):`, e);
         }
-        this.assetsCache.set(token, path);
+        this.assetsCache.set(cacheKey, path);
         return path;
     }
 
@@ -259,6 +272,7 @@ export class FeishuSync {
     private async buildMarkdown(item: FeishuSyncItem, options: FeishuSyncOptions, log?: (msg: string) => void): Promise<{ markdown: string; blockCount: number }> {
         let markdown = "";
         let blockCount = 0;
+        this.assetFailures = [];
         if (item.objType === "docx") {
             const blocks: FeishuBlock[] = await this.client.getDocxBlocks(item.objToken);
             blockCount = blocks.length;
@@ -269,6 +283,10 @@ export class FeishuSync {
                 resolveFile: options.syncAssets
                     ? async (block: FeishuBlock) => this.resolveAsset(block.file?.token, block.file?.name)
                     : undefined,
+                // 画板（mermaid/流程图）用 board.token 走画板导出接口换取图片
+                resolveBoard: options.syncAssets
+                    ? async (block: FeishuBlock) => this.resolveAsset(block.board?.token, `${block.board?.token || "board"}.png`, "board")
+                    : undefined,
                 onProgress: log,
             });
         } else if (item.objType === "doc") {
@@ -276,6 +294,16 @@ export class FeishuSync {
             markdown = await this.client.getDocRawContent(item.objToken);
         } else {
             throw new Error(`暂不支持同步的文档类型：${item.objType}`);
+        }
+
+        // 素材失败原因写进同步日志，避免只看得到正文里的占位提示却不知道原因
+        if (this.assetFailures.length) {
+            const reasons = Array.from(new Set(this.assetFailures)).slice(0, 3).join("；");
+            log?.(`  ⚠️ ${this.assetFailures.length} 个素材未能写入思源：${reasons}`);
+            if (this.assetFailures.some((reason) => /99991679|re-authorization|用户授权/.test(reason))) {
+                log?.("  提示：当前用户身份缺少新增权限（如 board:whiteboard:node:read），"
+                    + "请在「插件设置 → 飞书用户授权」中重新授权后再同步。");
+            }
         }
 
         if (options.addSource) {

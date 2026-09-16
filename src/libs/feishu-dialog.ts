@@ -223,7 +223,7 @@ export class FeishuSyncDialog {
         </div>
         <div class="feishu-sync__row feishu-sync__options">
             <label><input type="checkbox" id="feishu-recursive"> ${this.t("feishuRecursive", "递归子文档")}</label>
-            <label><input type="checkbox" id="feishu-assets"> ${this.t("feishuAssets", "同步图片/附件")}</label>
+            <label><input type="checkbox" id="feishu-assets"> ${this.t("feishuAssets", "同步图片/附件/画板")}</label>
             <label><input type="checkbox" id="feishu-incremental"> ${this.t("feishuIncremental", "增量同步")}</label>
             <label><input type="checkbox" id="feishu-source-note"> ${this.t("feishuAddSource", "添加来源")}</label>
         </div>

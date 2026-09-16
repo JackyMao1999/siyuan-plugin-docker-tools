@@ -141,6 +141,20 @@ function stripHtmlTags(text: string): string {
     return (text || "").replace(/<[^>]*>/g, "");
 }
 
+/** base64 -> UTF-8 文本（读取 base64 编码的错误响应体），失败返回空串 */
+function decodeBase64Text(base64: string): string {
+    try {
+        const binary = atob(base64 || "");
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return new TextDecoder().decode(bytes);
+    } catch (e) {
+        return "";
+    }
+}
+
 /**
  * 通过思源内核转发一个 HTTP 请求
  */
@@ -481,7 +495,10 @@ export class FeishuClient {
         return data?.content || "";
     }
 
-    /** 下载素材（图片/附件），返回 base64 数据 */
+    /**
+     * 下载素材（图片 / 附件）：直接用块里的 token 取原始文件
+     * 接口：GET /open-apis/drive/v1/medias/:file_token/download（需 drive:drive:readonly）
+     */
     async downloadMedia(fileToken: string): Promise<{ base64: string; contentType: string }> {
         const token = await this.ensureToken();
         const url = this.buildUrl(`/open-apis/drive/v1/medias/${encodeURIComponent(fileToken)}/download`);
@@ -492,12 +509,36 @@ export class FeishuClient {
             timeout: 120000,
             responseEncoding: "base64",
         });
-        if (resp.status >= 400) {
-            throw new Error(`下载飞书素材失败 (HTTP ${resp.status})`);
+        // 出错时飞书返回 JSON 错误体（同样被编码成 base64），解出来给出可读原因
+        if (resp.status >= 400 || (resp.contentType || "").includes("json")) {
+            throw new Error(`下载飞书素材失败：${decodeBase64Text(resp.body) || `HTTP ${resp.status}`}`);
         }
         if (!resp.body) {
             throw new Error("下载飞书素材失败：响应内容为空");
         }
         return { base64: resp.body, contentType: resp.contentType || "application/octet-stream" };
+    }
+
+    /**
+     * 下载画板为图片（mermaid / 流程图等画板块）：whiteboard_id 即块里的 board.token
+     * 接口：GET /open-apis/board/v1/whiteboards/:whiteboard_id/download_as_image（需 board:whiteboard:node:read）
+     */
+    async downloadBoardImage(whiteboardId: string): Promise<{ base64: string; contentType: string }> {
+        const token = await this.ensureToken();
+        const url = this.buildUrl(`/open-apis/board/v1/whiteboards/${encodeURIComponent(whiteboardId)}/download_as_image`);
+        const resp = await forwardProxy(url, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${token}` },
+            contentType: "application/octet-stream",
+            timeout: 120000,
+            responseEncoding: "base64",
+        });
+        if (resp.status >= 400 || (resp.contentType || "").includes("json")) {
+            throw new Error(`下载画板图片失败：${decodeBase64Text(resp.body) || `HTTP ${resp.status}`}`);
+        }
+        if (!resp.body) {
+            throw new Error("下载画板图片失败：响应内容为空");
+        }
+        return { base64: resp.body, contentType: resp.contentType || "image/png" };
     }
 }

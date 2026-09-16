@@ -243,13 +243,18 @@ export const getFileBlob = async (path: string): Promise<Blob | null> => {
 
 /**
  * 上传一个文件到思源的 assets 目录
+ *
+ * ⚠️ multipart 字段名必须是 `file[]`：内核 `kernel/model/upload.go` 读取的是
+ * `form.File["file[]"]`。字段名写错时内核收不到文件，却仍返回 code=0 + 空 succMap
+ * （空操作成功），调用方就会静默拿到 null，表现为图片/附件/画板全部「未能同步」。
+ *
  * @param file 文件对象
  * @returns 上传成功后的资源相对路径（形如 assets/xxx.png），失败返回 null
  */
 export async function uploadAsset(file: File): Promise<string | null> {
     const formData = new FormData();
     formData.append("assetsDirPath", "/assets/");
-    formData.append("file", file);
+    formData.append("file[]", file, file.name);
 
     const headers: Record<string, string> = {};
     const token = (window as any)?.siyuan?.config?.api?.token;
@@ -269,8 +274,17 @@ export async function uploadAsset(file: File): Promise<string | null> {
             return null;
         }
         const succMap: IResUpload["succMap"] = res.data?.succMap || {};
+        const errFiles: string[] = res.data?.errFiles || [];
         const keys = Object.keys(succMap);
-        return keys.length ? succMap[keys[0]] : null;
+        if (!keys.length) {
+            // 内核「没收到文件」也会返回 code=0，必须显式报错，避免素材静默丢失
+            console.error("上传资源失败：内核未接收文件（multipart 字段名需为 file[]）", errFiles);
+            return null;
+        }
+        if (errFiles.length) {
+            console.warn("部分资源上传失败:", errFiles);
+        }
+        return succMap[keys[0]];
     } catch (e) {
         console.error("上传资源异常:", e);
         return null;

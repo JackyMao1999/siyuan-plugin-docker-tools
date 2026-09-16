@@ -11,9 +11,36 @@
 
 import { FeishuClient, forwardProxy, parseJsonBody } from "./feishu-api";
 
-/** 用户授权默认申请的权限（offline_access 用于获取 refresh_token） */
+/**
+ * 用户授权默认申请的权限（offline_access 用于获取 refresh_token）
+ *
+ * 注意：`board:whiteboard:node:read` 用于把文档里的画板 / mermaid 图导出为图片，
+ * 是后续新增的权限。用户身份下「应用已开通」还不够，必须由用户重新授权带上该 scope，
+ * 否则调用画板接口会报 99991679（请重新授权）。
+ */
 export const DEFAULT_USER_SCOPE =
-    "wiki:wiki:readonly docx:document:readonly drive:drive:readonly offline_access";
+    "wiki:wiki:readonly docx:document:readonly drive:drive:readonly board:whiteboard:node:read offline_access";
+
+/** 合并多组空格分隔的 scope（去重、保持先后顺序） */
+export function mergeScopes(...groups: (string | undefined | null)[]): string {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const group of groups) {
+        for (const scope of (group || "").split(/\s+/)) {
+            const item = scope.trim();
+            if (!item || seen.has(item)) continue;
+            seen.add(item);
+            result.push(item);
+        }
+    }
+    return result.join(" ");
+}
+
+/** 返回 required 中 granted 未包含的权限（用于提示「需重新授权」） */
+export function missingScopes(granted: string | undefined | null, required: string): string[] {
+    const has = new Set((granted || "").split(/\s+/).filter(Boolean));
+    return (required || "").split(/\s+/).filter((scope) => !!scope && !has.has(scope));
+}
 
 export interface FeishuUserTokens {
     accessToken: string;

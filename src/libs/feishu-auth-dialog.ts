@@ -4,7 +4,7 @@
 
 import { Dialog, showMessage } from "siyuan";
 import { forwardProxy, parseJsonBody } from "./feishu-api";
-import { FeishuAuth } from "./feishu-auth";
+import { FeishuAuth, mergeScopes, missingScopes } from "./feishu-auth";
 import { copyToClipboard } from "./help-dialog";
 
 export interface FeishuAuthDialogDeps {
@@ -151,10 +151,24 @@ export class FeishuAuthDialog {
         return (text || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     }
 
+    /** 当前授权记录相对插件所需权限缺失的部分（offline_access 仅用于刷新令牌，不影响接口调用） */
+    private missingGrantedScopes(): string[] {
+        const required = this.deps.getConfig().scope;
+        return missingScopes(this.deps.auth.info?.scope, required).filter((scope) => scope !== "offline_access");
+    }
+
     private async init() {
-        this.scopeInput.value = this.deps.auth.info?.scope || this.deps.getConfig().scope;
+        // 老授权记录可能缺少后续新增的权限（如 board:whiteboard:node:read），
+        // 这里把「已授权」与「插件所需」取并集，重新授权时一并申请
+        this.scopeInput.value = mergeScopes(this.deps.auth.info?.scope, this.deps.getConfig().scope);
         this.renderStatus();
         this.renderChecklist();
+
+        const missing = this.missingGrantedScopes();
+        if (this.deps.auth.isAuthorized && missing.length) {
+            this.appendLog(`⚠️ 当前授权缺少权限：${missing.join("、")}`);
+            this.appendLog("点「① 打开授权页面」重新授权即可（授权范围已自动补全），否则相关接口会报 99991679。");
+        }
 
         // 若当前就是浏览器前端且地址栏里带了 code，自动填入
         const href = window.location.href;
@@ -174,6 +188,10 @@ export class FeishuAuthDialog {
         if (config.authMode === "user") {
             if (this.deps.auth.isAuthorized) {
                 text += ` · 已授权${info?.userName ? "：" + info.userName : ""}`;
+                const missing = this.missingGrantedScopes();
+                if (missing.length) {
+                    text += ` · <span class="feishu-auth__warn">缺少权限：${missing.join("、")}（请重新授权）</span>`;
+                }
             } else {
                 text += " · <span class=\"feishu-auth__warn\">尚未授权</span>";
             }
