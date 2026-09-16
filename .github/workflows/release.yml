@@ -3,7 +3,12 @@ name: Create Release on Tag Push
 on:
   push:
     tags:
+      # 集市要求 tag 可解析到有效 commit；大写 V 也一并支持，避免推 tag 后静默不出包
       - "v*"
+      - "V*"
+
+permissions:
+  contents: write
 
 jobs:
   build:

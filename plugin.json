@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-docker-tools",
   "author": "JackyMao",
   "url": "https://github.com/JackyMao1999/siyuan-plugin-docker-tools",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minAppVersion": "3.2.1",
   "backends": [
     "windows",
@@ -32,13 +32,9 @@
     "zh_CN": "支持文档导出为 PDF、格式化打印，以及飞书知识库同步到思源笔记"
   },
   "readme": {
+    "default": "README.md",
     "en_US": "README.md",
     "zh_CN": "README_zh_CN.md"
-  },
-  "funding": {
-    "custom": [
-      ""
-    ]
   },
   "keywords": [
     "docker",
