@@ -75,6 +75,9 @@ const createDefaultSetter = (type: TSettingItemType) => {
 }
 
 
+/** 思源设置面板中每一行的选择器（Setting.open 生成：<div class="b3-label config-item">…） */
+const SETTING_ROW_SELECTOR = ".config-item";
+
 export class SettingUtils {
     plugin: Plugin;
     name: string;
@@ -82,9 +85,18 @@ export class SettingUtils {
 
     settings: Map<string, ISettingUtilsItem> = new Map();
     elements: Map<string, HTMLElement> = new Map();
-    /** 分组标题的 key（只用于界面分区，不写入配置文件） */
+    /** 仅用于界面分区/切换的 key（不写入配置文件） */
     private sectionKeys = new Set<string>();
     private sectionSeq = 0;
+    /** 设置项所属分组（key -> groupId） */
+    private itemGroups = new Map<string, string>();
+    /** 当前 addItem 归属的分组 */
+    private currentGroup = "";
+    /** tab 定义与当前选中项 */
+    private tabs: { id: string; label: string }[] = [];
+    private activeTab = "";
+    /** 已渲染的设置行，用于 tab 切换时显示/隐藏 */
+    private rowElements: HTMLElement[] = [];
 
     constructor(args: {
         plugin: Plugin,
@@ -273,8 +285,98 @@ export class SettingUtils {
         });
     }
 
+    /**
+     * 指定之后添加的设置项归属哪个 tab 分组（配合 addTabs 使用）
+     * @param groupId 分组 id，需与 addTabs 中的 id 一致
+     */
+    useGroup(groupId: string) {
+        this.currentGroup = groupId;
+    }
+
+    /**
+     * 在设置面板顶部添加 tab 切换条：点击 tab 只显示该分组的设置项
+     * @param tabs 分组定义，第一个为默认选中
+     */
+    addTabs(tabs: { id: string; label: string }[]) {
+        this.tabs = tabs.slice();
+        this.activeTab = this.tabs[0]?.id || "";
+        const key = `__tabs__${++this.sectionSeq}`;
+        this.sectionKeys.add(key);
+        this.addItem({
+            key,
+            title: "",
+            description: "",
+            type: "custom",
+            direction: "row",
+            value: "",
+            createElement: () => {
+                // 面板每次打开都会重建 DOM，这里重置已记录的设置行
+                this.rowElements = [];
+                const wrap = document.createElement("div");
+                wrap.className = "plugin-setting__tabs";
+                for (const tab of this.tabs) {
+                    const button = document.createElement("button");
+                    button.type = "button";
+                    button.className = "b3-button b3-button--outline plugin-setting__tab";
+                    button.textContent = tab.label;
+                    button.dataset.tab = tab.id;
+                    button.onclick = () => {
+                        this.activeTab = tab.id;
+                        this.syncTabButtons(wrap);
+                        this.applyTabVisibility();
+                    };
+                    wrap.appendChild(button);
+                }
+                setTimeout(() => {
+                    // row 方向会生成空的标题与分隔线，去掉后这一行只留 tab 条
+                    const row = wrap.closest(SETTING_ROW_SELECTOR) as HTMLElement | null;
+                    row?.querySelectorAll(".config-name, .fn__hr").forEach((element) => element.remove());
+                    this.syncTabButtons(wrap);
+                    this.applyTabVisibility();
+                }, 0);
+                return wrap;
+            },
+            getEleVal: () => null,
+            setEleVal: () => { /* tab 条不参与配置读写 */ },
+        });
+    }
+
+    /** 记录设置项所在的行元素，并按当前 tab 决定是否隐藏 */
+    private trackRow(key: string, element: HTMLElement) {
+        const group = this.itemGroups.get(key) || "";
+        // 行元素由思源在 createActionElement 之后组装进 DOM，需等一个 tick 再定位
+        setTimeout(() => {
+            const row = element?.closest?.(SETTING_ROW_SELECTOR) as HTMLElement | null;
+            if (!row) return;
+            if (group) {
+                row.dataset.pluginGroup = group;
+            }
+            if (!this.rowElements.includes(row)) {
+                this.rowElements.push(row);
+            }
+            this.applyTabVisibility();
+        }, 0);
+    }
+
+    /** 按当前选中 tab 显示/隐藏各设置行（无分组的行始终显示） */
+    private applyTabVisibility() {
+        if (!this.tabs.length) return;
+        for (const row of this.rowElements) {
+            const group = row.dataset.pluginGroup || "";
+            row.classList.toggle("fn__none", !!group && group !== this.activeTab);
+        }
+    }
+
+    /** 刷新 tab 按钮的选中样式 */
+    private syncTabButtons(wrap: HTMLElement) {
+        wrap.querySelectorAll<HTMLElement>(".plugin-setting__tab").forEach((button) => {
+            button.classList.toggle("plugin-setting__tab--active", button.dataset.tab === this.activeTab);
+        });
+    }
+
     addItem(item: ISettingUtilsItem) {
         this.settings.set(item.key, item);
+        this.itemGroups.set(item.key, this.currentGroup);
         const IsCustom = item.type === 'custom';
         let error = IsCustom && (item.createElement === undefined || item.getEleVal === undefined || item.setEleVal === undefined);
         if (error) {
@@ -299,6 +401,7 @@ export class SettingUtils {
                 createActionElement: () => {
                     this.updateElementFromValue(item.key);
                     let element = this.getElement(item.key);
+                    this.trackRow(item.key, element);
                     return element;
                 }
             });
@@ -311,6 +414,7 @@ export class SettingUtils {
                     let val = this.get(item.key);
                     let element = item.createElement(val);
                     this.elements.set(item.key, element);
+                    this.trackRow(item.key, element);
                     return element;
                 }
             });

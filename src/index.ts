@@ -163,7 +163,14 @@ export default class DocExportPlugin extends Plugin {
     }
 
     private initSettings() {
-        this.settingUtils.addSection("通用", "帮助与使用向导");
+        // 顶部 tab 切换：只显示当前分组的设置项
+        this.settingUtils.addTabs([
+            { id: "export", label: this.i18n.settingTabExport || "导出 PDF / 打印" },
+            { id: "feishu", label: this.i18n.settingTabFeishu || "飞书知识库同步" },
+            { id: "general", label: this.i18n.settingTabGeneral || "通用 / 帮助" },
+        ]);
+
+        this.settingUtils.useGroup("general");
 
         this.settingUtils.addItem({
             key: "help",
@@ -177,7 +184,7 @@ export default class DocExportPlugin extends Plugin {
             }
         });
 
-        this.settingUtils.addSection("导出 PDF / 打印", "影响「导出 PDF」「打印文档」的排版与输出效果");
+        this.settingUtils.useGroup("export");
 
         this.settingUtils.addItem({
             key: "pageSize",
@@ -331,7 +338,7 @@ export default class DocExportPlugin extends Plugin {
             action: { callback: () => this.settingUtils.takeAndSave("exportMethod") }
         });
 
-        this.settingUtils.addSection("飞书知识库同步", "配置飞书应用凭据、访问身份与用户授权");
+        this.settingUtils.useGroup("feishu");
 
         this.settingUtils.addItem({
             key: "feishuBoardWidth",
