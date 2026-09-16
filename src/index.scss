@@ -435,10 +435,10 @@
     align-items: stretch;
 }
 
-/* 左侧列表：原生为 280px，这里窄 30px；提高优先级以覆盖原生样式 */
+/* 左侧列表：原生为 280px，这里收窄到 200px；提高优先级以覆盖原生样式 */
 .config__panel.plugin-setting__layout > .config__side {
     flex: 0 0 auto;
-    width: 250px;
+    width: 200px;
 }
 
 /* tab 内容区：原生 .config__tab-container 自带 margin/padding，这里只负责滚动 */
