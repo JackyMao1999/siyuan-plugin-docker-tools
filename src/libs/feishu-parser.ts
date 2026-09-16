@@ -514,7 +514,14 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             if (block.children?.length) {
                 return renderChildren(block.children, state, prefix);
             }
-            noteIssue(state, `不支持的块（类型 ${type}）`);
+            // 顺带把该块自带的字段名列出来（用于排查「类型 999」这类未知块到底带了什么数据）
+            const fields = Object.keys(block)
+                .filter((key) => !["block_id", "parent_id", "children", "block_type", "comment_ids"].includes(key))
+                .filter((key) => {
+                    const value = (block as any)[key];
+                    return value && (typeof value === "object" ? Object.keys(value).length > 0 : true);
+                });
+            noteIssue(state, `不支持的块（类型 ${type}${fields.length ? "，字段：" + fields.join("/") : ""}）`);
             const hint = block.text?.elements ? inlineFrom(block.text.elements) : "";
             return prefix + `> ⚠️ 暂不支持的块（类型 ${type}）${hint ? "：" + hint : ""}`;
         }
@@ -531,6 +538,15 @@ export async function docxBlocksToMarkdown(blocks: FeishuBlock[], ctx: ParseCont
         map.set(block.block_id, block);
     }
     const state: ParserState = { ctx, map, visited: new Set<string>(), issues: [] };
+
+    // 画板块清单：飞书不同版本会把 mermaid / 流程图挂在不同块类型上，先把实际类型与 token 打出来
+    const boardBlocks = blocks.filter((b) => b.board?.token);
+    if (boardBlocks.length) {
+        const detail = boardBlocks
+            .map((b) => `类型 ${b.block_type}（token: ${b.board.token}）`)
+            .join("；");
+        ctx.onProgress?.(`  检测到 ${boardBlocks.length} 个画板块：${detail}`);
+    }
 
     // 找到根块（页面块，或没有父块的块）
     const root = blocks.find((b) => b.block_type === 1) || blocks.find((b) => !b.parent_id || !map.has(b.parent_id));

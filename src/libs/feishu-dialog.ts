@@ -106,6 +106,8 @@ export interface FeishuSyncDialogDeps {
     identityLabel?: () => string;
     /** 是否使用用户身份 */
     isUserMode?: () => boolean;
+    /** 用户身份下当前授权记录缺失的权限（用于提前提示重新授权） */
+    getMissingScopes?: () => string[];
     /** 打开用户授权对话框 */
     openAuth?: () => void;
 }
@@ -316,6 +318,12 @@ export class FeishuSyncDialog {
         }
         if (this.deps.isUserMode && !this.deps.isUserMode()) {
             this.appendLog("提示：「应用（机器人）身份」只能看到被授权给应用的内容；若要访问你自己的云文档/知识库，请在设置中改为「用户身份」并完成授权。");
+        }
+        // 用户身份下，新增权限必须重新授权才会生效，这里提前提示，避免同步完才发现画板没导出
+        const missingScopes = this.deps.getMissingScopes?.() || [];
+        if (missingScopes.length) {
+            this.appendLog(`⚠️ 当前用户身份授权范围缺少：${missingScopes.join("、")}`);
+            this.appendLog("请在「插件设置 → 飞书用户授权」中点「① 打开授权页面」重新授权（授权范围已自动补全）。");
         }
 
         await Promise.all([this.loadNotebooks(), this.loadSpaces()]);

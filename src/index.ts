@@ -15,7 +15,7 @@ import { DEFAULT_SYNC_OPTIONS, FeishuSync, FeishuSyncOptions } from "./libs/feis
 import { FeishuSyncDialog } from "./libs/feishu-dialog";
 import { openHelpDialog } from "./libs/help-dialog";
 import { getExportHelpTopics, getFeishuHelpTopics } from "./libs/help-content";
-import { DEFAULT_USER_SCOPE, FeishuAuth } from "./libs/feishu-auth";
+import { DEFAULT_USER_SCOPE, FeishuAuth, missingScopes } from "./libs/feishu-auth";
 import { FeishuAuthDialog } from "./libs/feishu-auth-dialog";
 
 const STORAGE_NAME = "doc-export-config";
@@ -435,6 +435,14 @@ export default class DocExportPlugin extends Plugin {
         };
     }
 
+    /** 用户身份下当前授权记录缺失的权限（offline_access 只用于刷新令牌，不提示） */
+    private getMissingUserScopes(): string[] {
+        if (this.getFeishuCredentials().authMode !== "user") return [];
+        if (!this.feishuAuth?.isAuthorized) return [];
+        return missingScopes(this.feishuAuth.info?.scope, DEFAULT_USER_SCOPE)
+            .filter((scope) => scope !== "offline_access");
+    }
+
     /** 当前身份描述，用于同步对话框提示 */
     private getFeishuIdentityLabel(): string {
         const credentials = this.getFeishuCredentials();
@@ -522,6 +530,7 @@ export default class DocExportPlugin extends Plugin {
             openSetting: () => this.openSetting(),
             identityLabel: () => this.getFeishuIdentityLabel(),
             isUserMode: () => this.getFeishuCredentials().authMode === "user",
+            getMissingScopes: () => this.getMissingUserScopes(),
             openAuth: () => this.openFeishuAuth(),
         });
     }

@@ -139,6 +139,26 @@ function base64ToBlob(base64: string, contentType: string): Blob {
     return new Blob([bytes], { type: contentType || "application/octet-stream" });
 }
 
+/** 把飞书返回的错误翻译成可执行的排查建议（写进同步日志） */
+export function suggestAssetFix(message: string): string {
+    if (/99991679|re-authorization|用户授权/.test(message)) {
+        return "→ 需要重新授权：飞书后台开通并发布 board:whiteboard:node:read 后，到「插件设置 → 飞书用户授权」点「① 打开授权页面」重走一次授权。";
+    }
+    if (/2890005|forbidden|403/.test(message)) {
+        return "→ 当前身份无权查看该画板：把文档授权给应用（机器人）或确认用户身份有阅读权限。";
+    }
+    if (/2890002|2890003|invalid arg|record missing|404|1061002/.test(message)) {
+        return "→ 该 token 不是有效的画板 ID（可能不属于画板类块），已保留占位提示，内容不会丢失。";
+    }
+    if (/2891001|internal error|500/.test(message)) {
+        return "→ 飞书服务端异常，稍后重试即可。";
+    }
+    if (/1061003|1061007/.test(message)) {
+        return "→ 素材无权限或已被删除，请检查应用权限 / 素材是否仍存在。";
+    }
+    return "";
+}
+
 function extFromContentType(contentType: string, fallback: string): string {
     const map: Record<string, string> = {
         "image/png": ".png",
@@ -262,8 +282,12 @@ export class FeishuSync {
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
             this.assetFailures.push(`${label}：${message}`);
-            // 逐条写入同步日志：正文里只会留占位提示，日志里要能直接看到失败原因
+            // 逐条写入同步日志：正文里只会留占位提示，日志里要能直接看到失败原因与建议
             this.currentLog?.(`  ✘ ${label}同步失败（token: ${token}）：${message}`);
+            const suggestion = suggestAssetFix(message);
+            if (suggestion) {
+                this.currentLog?.(`     ${suggestion}`);
+            }
             console.warn(`同步飞书${label}失败 (${token}):`, e);
         }
         this.assetsCache.set(cacheKey, path);
@@ -305,7 +329,8 @@ export class FeishuSync {
         // 素材失败原因写进同步日志，避免只看得到正文里的占位提示却不知道原因
         if (this.assetFailures.length) {
             const unique = Array.from(new Set(this.assetFailures));
-            log?.(`  ⚠️ ${this.assetFailures.length} 处素材未能写入思源（${unique.length} 种原因，详见上面的 ✘ 行）`);
+            const first = unique[0].length > 220 ? unique[0].slice(0, 220) + "…" : unique[0];
+            log?.(`  ⚠️ ${this.assetFailures.length} 处素材未能写入思源（${unique.length} 种原因）：${first}`);
             const hint = unique.find((reason) => /99991679|re-authorization|用户授权|board:whiteboard/.test(reason));
             if (hint) {
                 log?.("  → 画板 / mermaid 需要用户身份重新授权：飞书后台开通 board:whiteboard:node:read 并发布版本后，"
