@@ -331,6 +331,15 @@ export default class DocExportPlugin extends Plugin {
         this.settingUtils.addSection("飞书知识库同步", "配置飞书应用凭据、访问身份与用户授权");
 
         this.settingUtils.addItem({
+            key: "feishuBoardWidth",
+            value: DEFAULT_SYNC_OPTIONS.boardImageWidth,
+            type: "number",
+            title: this.i18n.feishuBoardWidth,
+            description: this.i18n.feishuBoardWidthDesc,
+            action: { callback: () => this.settingUtils.takeAndSave("feishuBoardWidth") }
+        });
+
+        this.settingUtils.addItem({
             key: "feishuDomain",
             value: FEISHU_DOMAIN_CN,
             type: "select",
@@ -435,6 +444,13 @@ export default class DocExportPlugin extends Plugin {
         };
     }
 
+    /** 画板 / mermaid 图片最大宽度（px，0 = 原始尺寸） */
+    private getBoardImageWidth(): number {
+        const value = Number(this.settingUtils?.get("feishuBoardWidth"));
+        if (!Number.isFinite(value) || value <= 0) return 0;
+        return Math.min(4000, Math.round(value));
+    }
+
     /** 用户身份下当前授权记录缺失的权限（offline_access 只用于刷新令牌，不提示） */
     private getMissingUserScopes(): string[] {
         if (this.getFeishuCredentials().authMode !== "user") return [];
@@ -525,7 +541,8 @@ export default class DocExportPlugin extends Plugin {
             client: this.feishuClient,
             sync: this.feishuSync,
             i18n: this.i18n as any,
-            getOptions: () => this.feishuOptions,
+            // 画板图片宽度取自插件设置，改了设置无需重开对话框
+            getOptions: () => ({ ...this.feishuOptions, boardImageWidth: this.getBoardImageWidth() }),
             saveOptions: this.saveFeishuOptions,
             openSetting: () => this.openSetting(),
             identityLabel: () => this.getFeishuIdentityLabel(),

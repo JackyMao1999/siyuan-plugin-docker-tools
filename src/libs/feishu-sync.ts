@@ -26,6 +26,8 @@ export interface FeishuSyncOptions {
     recursive: boolean;
     /** 是否同步图片 / 附件到本地资源 */
     syncAssets: boolean;
+    /** 画板 / mermaid 图片最大宽度（px，0 = 保持原始尺寸） */
+    boardImageWidth: number;
     /** 是否按编辑时间增量同步 */
     incremental: boolean;
     /** 是否在文档开头添加来源信息 */
@@ -37,6 +39,8 @@ export const DEFAULT_SYNC_OPTIONS: FeishuSyncOptions = {
     rootPath: "/飞书知识库",
     recursive: true,
     syncAssets: true,
+    // 画板导出的图片通常很宽，默认缩到 800px 显示，0 表示保持原始尺寸
+    boardImageWidth: 800,
     incremental: true,
     addSource: true,
 };
@@ -173,6 +177,30 @@ function extFromContentType(contentType: string, fallback: string): string {
     return map[clean] || fallback;
 }
 
+/**
+ * 按最大宽度等比缩小图片（用于画板导出图：飞书返回的图很宽，直接插入会占满整屏）
+ * 缩小失败时原样返回，不影响同步。
+ */
+async function downscaleImage(blob: Blob, maxWidth: number): Promise<Blob> {
+    if (!maxWidth || maxWidth <= 0) return blob;
+    try {
+        const bitmap = await createImageBitmap(blob);
+        if (bitmap.width <= maxWidth) return blob;
+        const height = Math.max(1, Math.round(bitmap.height * (maxWidth / bitmap.width)));
+        const canvas = document.createElement("canvas");
+        canvas.width = maxWidth;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return blob;
+        ctx.drawImage(bitmap, 0, 0, maxWidth, height);
+        const scaled: Blob | null = await new Promise((resolve) => canvas.toBlob((result) => resolve(result), "image/png"));
+        return scaled && scaled.size > 0 ? scaled : blob;
+    } catch (e) {
+        console.warn("画板图片缩放失败，按原始尺寸上传:", e);
+        return blob;
+    }
+}
+
 export class FeishuSync {
     private plugin: Plugin;
     private client: FeishuClient;
@@ -262,9 +290,10 @@ export class FeishuSync {
      * 下载飞书素材并上传到思源资源目录，返回资源相对路径
      * @param kind media = 图片/附件（drive medias 接口）；board = 画板（导出为图片）
      */
-    private async resolveAsset(token: string, name: string, kind: "media" | "board" = "media"): Promise<string | null> {
+    private async resolveAsset(token: string, name: string, kind: "media" | "board" = "media", boardImageWidth = 0): Promise<string | null> {
         if (!token) return null;
-        const cacheKey = `${kind}:${token}`;
+        // 画板图片宽度参与缓存键：改了宽度后重新同步要拿到新尺寸的图
+        const cacheKey = `${kind}:${token}:${kind === "board" ? boardImageWidth : 0}`;
         if (this.assetsCache.has(cacheKey)) {
             return this.assetsCache.get(cacheKey);
         }
@@ -275,9 +304,18 @@ export class FeishuSync {
                 ? await this.client.downloadBoardImage(token)
                 : await this.client.downloadMedia(token);
             const ext = extFromContentType(media.contentType, kind === "board" ? ".png" : ".bin");
-            const fileName = name && /\.[a-z0-9]+$/i.test(name) ? name : `${token}${ext}`;
-            const blob = base64ToBlob(media.base64, media.contentType);
-            const file = new File([blob], sanitizeTitle(fileName), { type: media.contentType });
+            let fileName = name && /\.[a-z0-9]+$/i.test(name) ? name : `${token}${ext}`;
+            let blob = base64ToBlob(media.base64, media.contentType);
+            let contentType = media.contentType || "application/octet-stream";
+            if (kind === "board" && boardImageWidth > 0) {
+                const scaled = await downscaleImage(blob, boardImageWidth);
+                if (scaled !== blob) {
+                    blob = scaled;
+                    contentType = "image/png";
+                    fileName = fileName.replace(/\.[a-z0-9]+$/i, "") + ".png";
+                }
+            }
+            const file = new File([blob], sanitizeTitle(fileName), { type: contentType });
             path = await uploadAsset(file);
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
@@ -313,9 +351,14 @@ export class FeishuSync {
                 resolveFile: options.syncAssets
                     ? async (block: FeishuBlock) => this.resolveAsset(block.file?.token, block.file?.name)
                     : undefined,
-                // 画板 / mermaid / 流程图：用 board.token 走画板导出接口换取图片
+                // 画板 / mermaid / 流程图：用 board.token 走画板导出接口换取图片，并按设置限制显示宽度
                 resolveBoard: options.syncAssets
-                    ? async (block: FeishuBlock) => this.resolveAsset(block.board?.token, `${block.board?.token || "board"}.png`, "board")
+                    ? async (block: FeishuBlock) => this.resolveAsset(
+                        block.board?.token,
+                        `${block.board?.token || "board"}.png`,
+                        "board",
+                        options.boardImageWidth
+                    )
                     : undefined,
                 onProgress: log,
             });

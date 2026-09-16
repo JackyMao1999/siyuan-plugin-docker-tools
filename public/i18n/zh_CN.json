@@ -54,6 +54,8 @@
     "exportMethodMd": "转换",
     "feishuSync": "飞书知识库同步",
     "feishuNotConfigured": "请先在插件设置中配置飞书应用的 App ID 与 App Secret",
+    "feishuBoardWidth": "画板 / mermaid 图片宽度",
+    "feishuBoardWidthDesc": "单位 px：飞书画板（mermaid / 流程图）导出的图片会等比缩到这个宽度再插入，避免占满整屏；填 0 表示保持原始尺寸。",
     "feishuDomain": "飞书域名",
     "feishuDomainDesc": "选择飞书（国内版）或 Lark（国际版）开放平台域名",
     "feishuAppId": "飞书 App ID",

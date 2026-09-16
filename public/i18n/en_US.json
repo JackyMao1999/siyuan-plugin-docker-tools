@@ -54,6 +54,8 @@
     "exportMethodMd": "Convert",
     "feishuSync": "Feishu Knowledge Base Sync",
     "feishuNotConfigured": "Please configure Feishu App ID and App Secret in plugin settings first",
+    "feishuBoardWidth": "Board / Mermaid image width",
+    "feishuBoardWidthDesc": "In px. Board (mermaid / flowchart) images are scaled down to this width before insert; 0 keeps the original size.",
     "feishuDomain": "Feishu Domain",
     "feishuDomainDesc": "Choose Feishu (CN) or Lark (International) open platform domain",
     "feishuAppId": "Feishu App ID",
