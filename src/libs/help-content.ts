@@ -4,13 +4,25 @@
 
 import { HelpTopic } from "./help-dialog";
 
+/** 权限清单（含可选），用于一键复制到飞书后台「权限管理」批量开通 */
 const FEISHU_SCOPES = [
+    // 必需
     "wiki:wiki:readonly",
     "docx:document:readonly",
     "drive:drive:readonly",
-    "docs:document:readonly",
+    // 可选
     "board:whiteboard:node:read",
+    "docs:document.content:read",
 ].join("\n");
+
+/** 用户身份授权时插件默认申请的 scope（与实际授权链接保持一致） */
+const USER_SCOPES = [
+    "wiki:wiki:readonly",
+    "docx:document:readonly",
+    "drive:drive:readonly",
+    "board:whiteboard:node:read",
+    "offline_access",
+].join(" ");
 
 const LINK_STYLE = 'style="color:var(--b3-theme-primary);text-decoration:underline;"';
 
@@ -24,7 +36,8 @@ export function getFeishuHelpTopics(): HelpTopic[] {
             html: `
 <ol>
 <li>在飞书开放平台创建「企业自建应用」，拿到 <code>App ID</code> 和 <code>App Secret</code>。</li>
-<li>给应用开通下面 4 个权限，并把应用（机器人）添加为目标知识库 / 文档的协作者。</li>
+<li>给应用开通权限（见第 ③ 步）。用「应用（机器人）身份」时还要把应用加为目标知识库 / 文档的协作者；
+若你用的是「用户身份」，则不需要加协作者，改用你自己的权限。</li>
 <li>回到思源：<b>插件设置</b> → 填写 <code>飞书 App ID</code> / <code>飞书 App Secret</code> → 顶栏插件图标 → <b>飞书知识库同步</b>。</li>
 </ol>
 <p>同步方向只有一个：<b>飞书 → 思源</b>，不会修改飞书里的内容。</p>`,
@@ -51,35 +64,73 @@ export function getFeishuHelpTopics(): HelpTopic[] {
         },
         {
             id: "scopes",
-            title: "③ 第二步：开通权限（飞书需要开通哪些功能）",
-            keywords: "权限 scope 开通 授权 功能 wiki docx drive docs readonly 权限管理 发布 版本 必需 可选",
+            title: "③ 第二步：开通权限（机器人权限 / 用户权限）",
+            keywords: "权限 scope 开通 授权 功能 wiki docx drive docs board whiteboard readonly 权限管理 发布 版本 必需 可选 机器人 用户 99991679 20027",
             html: `
-<p>进入应用 → 左侧 <b>权限管理</b>，搜索下面的权限名称并勾选，然后点击「批量开通 / 确定」。</p>
+<p>飞书的权限分两层，都要在开发者后台<b>先申请、再发布版本</b>：</p>
+<ul>
+<li><b>① 应用（机器人）权限</b>：在「权限管理 → API 权限」给应用开通，机器人身份直接就能用。</li>
+<li><b>② 用户权限</b>：把同一批 scope 交给<b>你本人</b>在授权页同意，用户身份才会拿到（<b>后台没申请 → 授权页会报 20027；新增权限 → 必须重新授权，否则报 99991679</b>）。</li>
+</ul>
+
+<h4>① 应用（机器人）权限</h4>
 <table class="plugin-help__table">
 <thead><tr><th>权限标识</th><th>是否必需</th><th>用途</th></tr></thead>
 <tbody>
 <tr><td><code>wiki:wiki:readonly</code></td><td>✅ 必需</td><td>读取飞书知识库（Wiki）的空间与节点目录</td></tr>
 <tr><td><code>docx:document:readonly</code></td><td>✅ 必需</td><td>读取新版文档（docx）的正文内容</td></tr>
 <tr><td><code>drive:drive:readonly</code></td><td>✅ 必需</td><td>浏览云文档文件夹、下载文档中的图片与附件</td></tr>
+<tr><td><code>board:whiteboard:node:read</code></td><td>⭕ 可选</td><td>把文档里的画板 / mermaid 图导出为图片</td></tr>
 <tr><td><code>docs:document.content:read</code></td><td>⭕ 可选</td><td>同步旧版文档（只能取纯文本）</td></tr>
-<tr><td><code>board:whiteboard:node:read</code></td><td>⭕ 可选</td><td>把文档里的画板 / mermaid 图导出为图片一并同步</td></tr>
+</tbody>
+</table>
+
+<h4>② 用户权限（切换「用户身份」后同步要用）</h4>
+<p>插件在授权时默认申请下面这些范围，你在授权页同意即可：</p>
+<table class="plugin-help__table">
+<thead><tr><th>授权范围</th><th>用途</th></tr></thead>
+<tbody>
+<tr><td><code>wiki:wiki:readonly</code><br><code>docx:document:readonly</code><br><code>drive:drive:readonly</code></td><td>与「机器人权限」里对应的三项用途相同，只是改为用<b>你的身份</b>去读你自己的云文档与知识库</td></tr>
+<tr><td><code>board:whiteboard:node:read</code></td><td>画板 / mermaid 导出为图片（同样需要后台已申请并发布该权限）</td></tr>
+<tr><td><code>offline_access</code></td><td>获取 refresh_token，用来自动续期，省得反复授权</td></tr>
+</tbody>
+</table>
+<p>⚠️ 三个容易踩的点：</p>
+<ul>
+<li><b>后台先申请，授权页才勾得动</b>：没申请就带着该 scope 去授权 → <code>20027 应用未申请该权限</code>。</li>
+<li><b>新增权限必须重新授权</b>：后台新开通的权限不会自动进到已有令牌里 → <code>99991679 请重新授权</code>。
+到「插件设置 → 飞书用户授权」点 <b>① 打开授权页面</b> 重走一次即可（授权范围会自动带上新权限）。</li>
+<li><b>旧版文档要手动补一个 scope</b>：默认范围里<b>故意不含</b> <code>docs:document.content:read</code>（你没申请它会导致授权直接失败）。
+真要同步旧版文档时，在授权对话框的 <b>「授权范围」输入框</b>末尾补上它再授权。</li>
+</ul>
+
+<h4>两种身份怎么选</h4>
+<table class="plugin-help__table">
+<thead><tr><th>对比项</th><th>应用（机器人）身份</th><th>用户身份</th></tr></thead>
+<tbody>
+<tr><td>能看到的内容</td><td>只有被授权给应用的知识库 / 文档</td><td>你自己有权限的全部云文档与知识库</td></tr>
+<tr><td>是否要加协作者</td><td>要：把应用加入知识库成员 / 文档应用</td><td>不用：直接使用你自己的权限</td></tr>
+<tr><td>要做的配置</td><td>后台开通权限 + 发布版本</td><td>后台开通权限 + 发布版本 + 完成一次用户授权</td></tr>
+<tr><td>适合场景</td><td>团队 / 部门共享的知识库</td><td>同步「我自己的」空间与文档</td></tr>
 </tbody>
 </table>
 <p><b>开通后一定要发布版本</b>：左侧 <b>版本管理与发布</b> → 创建版本 → 申请发布。（若企业开启了应用管控，需要管理员审核通过。）</p>
 <pre class="plugin-help__copy-src">${FEISHU_SCOPES}</pre>
-<button class="b3-button b3-button--outline plugin-help__copy">复制权限清单</button>`,
+<button class="b3-button b3-button--outline plugin-help__copy">复制全部权限清单</button>
+<p class="plugin-help__hint">用户身份授权时实际申请的范围：<code>${USER_SCOPES}</code></p>`,
         },
         {
             id: "grant",
-            title: "④ 第三步：把文档 / 知识库授权给应用",
-            keywords: "授权 协作者 添加文档应用 机器人 成员管理 阅读权限 看不到知识库 空",
+            title: "④ 第三步：把文档 / 知识库授权给应用（仅机器人身份）",
+            keywords: "授权 协作者 添加文档应用 机器人 成员管理 阅读权限 看不到知识库 空 用户身份",
             html: `
-<p>自建应用默认只能看到“被授权”的内容，需要手动把应用加进去：</p>
+<p><b>这一步只对「应用（机器人）身份」需要</b>：自建应用默认只能看到“被授权”的内容，要手动把应用加进去。</p>
 <ul>
 <li><b>知识库（Wiki）</b>：打开目标知识库 → <b>设置</b> → <b>成员管理</b> → 添加成员，搜索你的应用名称（机器人），权限给「可阅读」。</li>
 <li><b>单个云文档</b>：打开文档 → 右上角 <b>···</b> → 更多 → <b>添加文档应用</b>，选择你的应用并授予「可阅读」。</li>
 </ul>
-<p>如果同步时看不到任何知识空间 / 文档，基本都是这一步没做，或上一步的权限还没发布。</p>`,
+<p>如果同步时看不到任何知识空间 / 文档，基本都是这一步没做，或上一步的权限还没发布。</p>
+<p>💡 用的是「用户身份」则<b>不需要</b>这一步：同步走你自己的账号权限，你在飞书里能看到的，插件就能读到（见「★ 用户身份授权」）。</p>`,
         },
         {
             id: "siyuan-settings",
@@ -216,8 +267,10 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 添加一个地址，例如 <code>http://localhost:8080/feishu-callback</code>（这个地址不需要真的能打开）。
 <br>更省事的做法：在授权对话框里点 <b>「打开后台配置页」</b> 直达该页面，点 <b>「复制」</b> 把地址复制过去。</li>
 <li>确认应用已申请 <code>wiki:wiki:readonly</code>、<code>docx:document:readonly</code>、<code>drive:drive:readonly</code>
-权限并已发布版本（用户授权同样需要这些权限）；
-如需同步画板 / mermaid 图，还要申请 <code>board:whiteboard:node:read</code>。</li>
+并已发布版本（用户身份同样要先在后台申请这些权限，详见第 ③ 步）：
+如需同步画板 / mermaid 图，还要申请 <code>board:whiteboard:node:read</code>；
+如需同步<b>旧版文档</b>，申请 <code>docs:document.content:read</code> 后，
+还要在下面第 4 步的授权对话框「授权范围」里手动补上它。</li>
 <li>思源插件设置中：<b>飞书访问身份</b> 改为「用户身份」；
 <b>授权回调地址</b> 填第 1 步配置的那个地址（必须<b>完全一致</b>）。</li>
 <li>点击设置中的 <b>打开授权 / 授权管理</b> → 点「① 打开授权页面」在浏览器登录并同意授权。</li>

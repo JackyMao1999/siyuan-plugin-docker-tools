@@ -44,13 +44,21 @@
 ### 使用步骤
 
 1. 在[飞书开放平台](https://open.feishu.cn/app)创建「企业自建应用」，获取 **App ID** 与 **App Secret**。
-2. 为应用开通以下权限（权限管理 → API 权限）：
+2. 为应用开通以下权限（**权限管理 → API 权限**），**开通后必须发布版本**：
+
+   **应用（机器人）身份**
    - `wiki:wiki:readonly`（查看知识库）
    - `docx:document:readonly`（查看新版文档）
    - `drive:drive:readonly`（查看云文档，图片/附件下载也依赖此权限）
-   - 如需同步旧版文档，额外开通 `docs:document:readonly`
-   - 如需把文档里的画板 / mermaid 图导出为图片，额外开通 `board:whiteboard:node:read`
-     （用户身份授权时同样需要，且要重新授权一次才会生效，否则接口报 99991679）
+   - 可选：`board:whiteboard:node:read`（把画板 / mermaid 图导出为图片）
+   - 可选：`docs:document.content:read`（同步旧版文档，只能取纯文本）
+
+   **用户身份**（需额外完成一次 OAuth 授权，授权时由插件申请）
+   - `wiki:wiki:readonly` `docx:document:readonly` `drive:drive:readonly`（同上三项，改成用你自己的权限读取）
+   - `board:whiteboard:node:read`（画板 / mermaid 导出为图片）
+   - `offline_access`（获取 refresh_token，自动续期）
+   - ⚠️ 用户身份下「后台开通 ≠ 已授权」：**新增权限后必须重新授权**才会生效，否则相关接口报 `99991679`；
+     需要用用户身份同步**旧版文档**时，还要在授权对话框的「授权范围」里手动补上 `docs:document.content:read`
 3. 在飞书中将目标知识库/文档授权给该应用（应用机器人需加入对应知识空间或文档协作者）。
 4. 在思源中打开 **插件设置**，填写 `飞书 App ID`、`飞书 App Secret`，并按需选择 `飞书域名`（国内版 feishu.cn / 国际版 Lark）。
 5. 点击顶栏插件图标 → **飞书知识库同步**（或使用命令 `飞书知识库同步` / 快捷键 `Ctrl+Alt+F`）。

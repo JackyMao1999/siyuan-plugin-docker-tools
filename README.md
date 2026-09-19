@@ -43,13 +43,22 @@ dialog → `Finish`. See the built-in **Help** (search "user identity") for deta
 ### Setup
 
 1. Create a "Custom App" on the [Feishu Open Platform](https://open.feishu.cn/app) and get the **App ID** / **App Secret**.
-2. Grant the following scopes:
+2. Grant the following scopes (**Permission management → API permissions**) and **publish a version** afterwards:
+
+   **App (bot) identity**
    - `wiki:wiki:readonly`
    - `docx:document:readonly`
    - `drive:drive:readonly`
-   - `docs:document:readonly` (only for legacy docs)
-   - `board:whiteboard:node:read` (only if you want boards / mermaid diagrams exported as images;
-     also required when using user-identity auth, and you must re-authorize for it to take effect)
+   - optional: `board:whiteboard:node:read` (export boards / mermaid diagrams as images)
+   - optional: `docs:document.content:read` (legacy docs, plain text only)
+
+   **User identity** (requires an extra OAuth authorization; the plugin requests these scopes)
+   - `wiki:wiki:readonly` `docx:document:readonly` `drive:drive:readonly` (same three, but read with your own account)
+   - `board:whiteboard:node:read` (boards / mermaid export)
+   - `offline_access` (refresh_token for automatic renewal)
+   - ⚠️ With user identity, granting a scope in the console is not enough: **new scopes require re-authorization**,
+     otherwise the API returns `99991679`. To sync **legacy docs** with user identity, add
+     `docs:document.content:read` manually to the "scope" field in the authorization dialog.
 3. Share the target Wiki space / document with the app (add the bot as a collaborator).
 4. Open the plugin **Settings** in SiYuan, fill in `Feishu App ID` / `Feishu App Secret`, and choose the domain (feishu.cn or Lark).
 5. Click the plugin icon in the top bar → **Feishu Knowledge Base Sync**, or use the command / shortcut `Ctrl+Alt+F`.

@@ -295,6 +295,22 @@
     overflow: auto;
 }
 
+/* 帮助内容里的小标题（机器人权限 / 用户权限等分组） */
+.plugin-help__content h4 {
+    margin: 12px 0 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--b3-theme-on-background);
+}
+
+/* 帮助内容里的补充说明（灰色小字） */
+.plugin-help__content .plugin-help__hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--b3-theme-on-surface-light);
+    word-break: break-all;
+}
+
 .plugin-help__content code {
     padding: 1px 4px;
     border-radius: 3px;
