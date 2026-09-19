@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-docker-tools",
   "author": "JackyMao",
   "url": "https://github.com/JackyMao1999/siyuan-plugin-docker-tools",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "minAppVersion": "3.2.1",
   "backends": [
     "windows",
