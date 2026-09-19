@@ -1,5 +1,7 @@
 # Tools for SiYuan Docker
 
+**English** | [简体中文](./README_zh_CN.md)
+
 1. Export documents to PDF
 2. Print documents
 3. Sync Feishu (Lark) knowledge base into SiYuan (Feishu → SiYuan, one-way)
