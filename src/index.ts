@@ -13,14 +13,17 @@ import { exportToPdf, exportRenderedToPdf, DEFAULT_OPTIONS } from "./libs/export
 import { FEISHU_DOMAIN_CN, FEISHU_DOMAIN_LARK, FeishuClient } from "./libs/feishu-api";
 import { DEFAULT_SYNC_OPTIONS, FeishuSync, FeishuSyncOptions } from "./libs/feishu-sync";
 import { FeishuSyncDialog } from "./libs/feishu-dialog";
+import { BookmarkSync, DEFAULT_BOOKMARK_OPTIONS, BookmarkSyncOptions } from "./libs/bookmark-sync";
+import { BookmarkSyncDialog } from "./libs/bookmark-dialog";
 import { openHelpDialog } from "./libs/help-dialog";
-import { getExportHelpTopics, getFeishuHelpTopics } from "./libs/help-content";
+import { getBookmarkHelpTopics, getExportHelpTopics, getFeishuHelpTopics } from "./libs/help-content";
 import { DEFAULT_USER_SCOPE, FeishuAuth, missingScopes } from "./libs/feishu-auth";
 import { FeishuAuthDialog } from "./libs/feishu-auth-dialog";
 
 const STORAGE_NAME = "doc-export-config";
 const FEISHU_CONFIG_FILE = "feishu-sync-config.json";
 const FEISHU_AUTH_FILE = "feishu-auth.json";
+const BOOKMARK_CONFIG_FILE = "bookmark-sync-config.json";
 const DEFAULT_REDIRECT_URI = "http://localhost:8080/feishu-callback";
 
 export default class DocExportPlugin extends Plugin {
@@ -31,6 +34,8 @@ export default class DocExportPlugin extends Plugin {
     private feishuSync: FeishuSync;
     private feishuAuth: FeishuAuth;
     private feishuOptions: FeishuSyncOptions = { ...DEFAULT_SYNC_OPTIONS };
+    private bookmarkSync: BookmarkSync;
+    private bookmarkOptions: BookmarkSyncOptions = { ...DEFAULT_BOOKMARK_OPTIONS };
 
     async onload() {
         try {
@@ -65,6 +70,9 @@ export default class DocExportPlugin extends Plugin {
 <path d="M16 2C8.3 2 2 8.3 2 16s6.3 14 14 14 14-6.3 14-14S23.7 2 16 2zm0 25.4C9.7 27.4 4.6 22.3 4.6 16S9.7 4.6 16 4.6 27.4 9.7 27.4 16 22.3 27.4 16 27.4z"></path>
 <path d="M16 22.5a1.7 1.7 0 1 0 0 3.4 1.7 1.7 0 0 0 0-3.4z"></path>
 <path d="M16 6.8c-2.9 0-5.1 2-5.1 4.8h2.6c0-1.4 1.1-2.4 2.5-2.4s2.4.9 2.4 2.1c0 .9-.5 1.5-1.6 2.2-1.4.9-1.9 1.7-1.9 3v.5h2.5v-.4c0-1 .4-1.6 1.6-2.4 1.3-.9 1.9-1.8 1.9-3.1 0-2.5-2.1-4.3-4.9-4.3z"></path>
+</symbol>`);
+            this.addIcons(`<symbol id="iconBookmarkSync" viewBox="0 0 32 32">
+<path d="M7 3h18a2 2 0 0 1 2 2v25.2a1.1 1.1 0 0 1-1.7.9L16 25l-9.3 6.1a1.1 1.1 0 0 1-1.7-.9V5a2 2 0 0 1 2-2zm2 4v18.4l6.3-4.1a1.1 1.1 0 0 1 1.4 0L23 25.4V7H9z"></path>
 </symbol>`);
 
             this.protyleSlash = [];
@@ -106,6 +114,15 @@ export default class DocExportPlugin extends Plugin {
                 console.error("Error loading feishu sync records:", error);
             }
 
+            // 初始化浏览器书签同步
+            this.bookmarkSync = new BookmarkSync(this);
+            try {
+                await this.bookmarkSync.loadRecords();
+            } catch (error) {
+                console.error("Error loading bookmark sync records:", error);
+            }
+            await this.loadBookmarkOptions();
+
             this.addCommand({
                 langKey: "printDoc",
                 hotkey: "⌃⌥P",
@@ -127,6 +144,14 @@ export default class DocExportPlugin extends Plugin {
                 hotkey: "⌃⌥F",
                 callback: () => {
                     this.openFeishuSync();
+                },
+            });
+
+            this.addCommand({
+                langKey: "bookmarkSync",
+                hotkey: "⌃⌥B",
+                callback: () => {
+                    this.openBookmarkSync();
                 },
             });
 
@@ -167,6 +192,7 @@ export default class DocExportPlugin extends Plugin {
         this.settingUtils.addTabs([
             { id: "export", label: this.i18n.settingTabExport || "导出 PDF / 打印" },
             { id: "feishu", label: this.i18n.settingTabFeishu || "飞书知识库同步" },
+            { id: "bookmark", label: this.i18n.settingTabBookmark || "浏览器书签同步" },
             { id: "general", label: this.i18n.settingTabGeneral || "通用 / 帮助" },
         ]);
 
@@ -430,6 +456,28 @@ export default class DocExportPlugin extends Plugin {
             }
         });
 
+        this.settingUtils.useGroup("bookmark");
+
+        this.settingUtils.addItem({
+            key: "bookmarkSyncOpen",
+            value: "",
+            type: "button",
+            title: this.i18n.bookmarkSync,
+            description: this.i18n.bookmarkSyncDesc,
+            button: {
+                label: this.i18n.bookmarkOpenButton,
+                callback: () => this.openBookmarkSync()
+            }
+        });
+
+        this.settingUtils.addItem({
+            key: "bookmarkHint",
+            value: "",
+            type: "hint",
+            title: this.i18n.bookmarkHintTitle || "浏览器书签同步：使用提示",
+            description: this.i18n.bookmarkHintDesc || "先在浏览器里「导出书签」为 HTML 文件；思源里插入一个数据库块，字段建议：网站名（主键）、网站链接（链接类型）、描述、标签（多选）、来源（文本）。缺列可在对话框里一键创建。"
+        });
+
     }
 
     /** 读取飞书应用凭据 */
@@ -523,11 +571,38 @@ export default class DocExportPlugin extends Plugin {
         await this.saveData(FEISHU_CONFIG_FILE, this.feishuOptions);
     }
 
+    private async loadBookmarkOptions() {
+        try {
+            const data = await this.loadData(BOOKMARK_CONFIG_FILE);
+            if (data) {
+                this.bookmarkOptions = { ...DEFAULT_BOOKMARK_OPTIONS, ...data };
+            }
+        } catch (error) {
+            console.error("Error loading bookmark sync options:", error);
+        }
+    }
+
+    private saveBookmarkOptions = async (options: BookmarkSyncOptions) => {
+        this.bookmarkOptions = { ...options };
+        await this.saveData(BOOKMARK_CONFIG_FILE, this.bookmarkOptions);
+    }
+
+    /** 打开浏览器书签同步对话框 */
+    private openBookmarkSync() {
+        new BookmarkSyncDialog({
+            sync: this.bookmarkSync,
+            i18n: this.i18n as any,
+            getOptions: () => ({ ...this.bookmarkOptions }),
+            saveOptions: this.saveBookmarkOptions,
+            openHelp: () => this.openHelp(),
+        });
+    }
+
     /** 打开使用帮助（可检索的配置向导） */
     private openHelp() {
         openHelpDialog(
             this.i18n.helpTitle || "使用帮助",
-            [...getFeishuHelpTopics(), ...getExportHelpTopics()],
+            [...getFeishuHelpTopics(), ...getBookmarkHelpTopics(), ...getExportHelpTopics()],
             {
                 searchPlaceholder: this.i18n.helpSearch || "搜索：如「权限」「App ID」「图片」「边距」",
                 noResult: this.i18n.helpNoResult || "没有找到相关内容，换个关键词试试",
@@ -607,6 +682,13 @@ export default class DocExportPlugin extends Plugin {
             icon: "iconFeishuUser",
             label: this.i18n.feishuAuthMenu,
             click: () => this.openFeishuAuth()
+        });
+        menu.addSeparator();
+        menu.addItem({
+            icon: "iconBookmarkSync",
+            label: this.i18n.bookmarkSync,
+            accelerator: adaptHotkey("⌃⌥B"),
+            click: () => this.openBookmarkSync()
         });
         menu.addSeparator();
         menu.addItem({

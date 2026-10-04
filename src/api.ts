@@ -231,6 +231,39 @@ export async function getFile(path: string): Promise<any> {
     });
 }
 
+/**
+ * 读取工作区内的文本文件（如用户放进挂载目录的浏览器书签导出 HTML）。
+ *
+ * 直接用 fetch 拿原始字节再按 UTF-8 解码：/api/file/getFile 对非 JSON 文件
+ * 返回的是文件原文，fetchSyncPost / fetchPost 的 JSON 解析路径不可靠。
+ * Docker 部署同样可用（走内核 HTTP 接口，路径相对工作区，如 /data/xxx.html）。
+ */
+export async function getWorkspaceFileText(path: string): Promise<string> {
+    let clean = (path || "").trim();
+    if (!clean) throw new Error("文件路径为空");
+    if (clean.includes("..")) throw new Error(`路径不合法（含 ..）：${clean}`);
+    if (!clean.startsWith("/")) clean = "/" + clean;
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const token = (window as any)?.siyuan?.config?.api?.token;
+    if (token) {
+        headers["Authorization"] = `Token ${token}`;
+    }
+    const response = await fetch("/api/file/getFile", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ path: clean }),
+    });
+    if (!response.ok) {
+        throw new Error(`读取失败（HTTP ${response.status}）：${clean}，请确认文件在工作区内且路径正确`);
+    }
+    const text = await response.text();
+    if (!text.trim()) {
+        throw new Error(`文件内容为空：${clean}`);
+    }
+    return text;
+}
+
 export const getFileBlob = async (path: string): Promise<Blob | null> => {
     const response = await fetch('/api/file/getFile', {
         method: 'POST',

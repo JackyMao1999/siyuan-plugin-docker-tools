@@ -301,6 +301,92 @@ export function getFeishuHelpTopics(): HelpTopic[] {
     ];
 }
 
+/** 浏览器书签同步相关帮助 */
+export function getBookmarkHelpTopics(): HelpTopic[] {
+    return [
+        {
+            id: "bookmark-quick-start",
+            title: "① 四步把浏览器书签同步进思源",
+            keywords: "书签 bookmark chrome firefox edge safari 导出 导入 快速开始 怎么用 数据库",
+            html: `
+<ol>
+<li><b>导出书签</b>：在浏览器书签管理器里选「导出书签」，得到一个 HTML 文件（各浏览器入口见第 ② 步）。</li>
+<li><b>建目标数据库</b>：在任意文档里输入 <code>/数据库</code> 插入一个数据库块（字段可以留空，插件能一键补建）。</li>
+<li><b>打开同步对话框</b>：顶栏插件图标 → 「浏览器书签同步」（快捷键 <code>Ctrl+Alt+B</code>），
+添加导出的 HTML（点击 / 拖拽 / 工作区路径），勾选要同步的文件夹，选择目标数据库。</li>
+<li>点「开始同步」。书签会变成数据库里的<b>独立行</b>：网站名（主键）、网站链接、描述、标签（书签所在文件夹）、来源（哪个浏览器）。</li>
+</ol>`,
+        },
+        {
+            id: "bookmark-export",
+            title: "② 各浏览器怎么导出书签 HTML",
+            keywords: "chrome edge firefox safari brave 导出书签 管理器 bookmarks html 在哪里",
+            html: `
+<table class="plugin-help__table">
+<thead><tr><th>浏览器</th><th>操作</th></tr></thead>
+<tbody>
+<tr><td>Chrome / Edge / Brave</td><td>书签管理器（<code>chrome://bookmarks</code>，菜单 → 书签与列表 → 书签管理器）→ 右上角 ⋮ → <b>导出书签</b></td></tr>
+<tr><td>Firefox</td><td>库（<code>Ctrl+Shift+O</code>）→ 导入和备份 → <b>导出书签到 HTML 文件…</b></td></tr>
+<tr><td>Safari</td><td>菜单栏 文件 → 导出书签…（旧版；新版可通过「编辑书签」页拖拽或用第三方导出）</td></tr>
+</tbody>
+</table>
+<p>导出的都是 Netscape 书签格式 HTML，本插件通用解析。<b>不支持</b>直接读取浏览器内部数据
+（Chrome 的 <code>Bookmarks</code> JSON、Firefox 的 <code>places.sqlite</code>）——插件运行在浏览器沙箱里，
+没有文件系统权限，Docker / 移动端同样只能走导出文件这条路。</p>`,
+        },
+        {
+            id: "bookmark-fields",
+            title: "③ 字段映射与目标数据库",
+            keywords: "字段 映射 列 网站名 网站链接 标签 描述 来源 创建缺失列 主键 类型",
+            html: `
+<p>插件按<b>列名关键词 + 列类型</b>自动匹配目标数据库的字段，匹配不到可点「创建缺失列」一键补建：</p>
+<dl>
+<dt>网站名</dt><dd>数据库主键（块列），显示为书签标题。</dd>
+<dt>网站链接（必须）</dt><dd>「链接」类型列（文本列也可），是每一行的<b>身份</b>：按规范化 URL（协议/域名小写、去默认端口、去尾部斜杠）匹配已有行。</dd>
+<dt>描述</dt><dd>文本列，书签导出文件里的说明文字（多数浏览器不写，可能为空）。</dd>
+<dt>标签</dt><dd>多选列，写入书签所在文件夹路径的每一层名称，如「书签栏 → 工作 → 周报工具」生成三个标签。</dd>
+<dt>来源</dt><dd>文本列，写入浏览器名（默认取导出文件名）。勾选「写入来源列」后，同一 URL 在不同浏览器会各保留一行，互不覆盖。</dd>
+</dl>
+<p>目标数据库通过名称搜索选择，或直接粘贴<b>数据库块的 ID</b>（数据库右上角 ⋮ → 复制 → 块 ID 引用）。</p>`,
+        },
+        {
+            id: "bookmark-incremental",
+            title: "④ 增量、去重与「清理已消失的书签」",
+            keywords: "增量 去重 删除 消失 清理 重置同步记录 hash 重复行",
+            html: `
+<dl>
+<dt>增量同步（默认开）</dt>
+<dd>插件记录每条书签上次同步的内容 hash（标题+描述+标签）。内容没变的行直接跳过；
+变了就更新对应单元格；URL 是新的就追加行。关掉增量则每次全部重写。</dd>
+<dt>去重</dt>
+<dd>同一来源文件内 URL 重复的书签，解析阶段就丢弃（日志会报数量）。
+跨文件重复由「写入来源列」决定：开 = 各留一行；关 = 相同 URL 只认一行。</dd>
+<dt>清理已消失的书签（默认关）</dt>
+<dd>浏览器里删掉的书签，数据库里的行<b>默认保留</b>。打开这个开关后，
+「上次同步过、这次来源文件里没有了」的行会被删除——只会删插件自己同步出来的行，手工加的行不动。</dd>
+<dt>重置同步记录</dt>
+<dd>清空插件的 hash 记录，下次同步把所有勾选的书签重新写一遍（不会产生重复行，因为行身份在数据库里）。
+换了目标数据库、或同步行对不上号时使用。</dd>
+</dl>`,
+        },
+        {
+            id: "bookmark-docker",
+            title: "⑤ Docker / 群晖 / 手机浏览器场景",
+            keywords: "docker 群晖 nas 挂载 工作区 路径 定时 自动 移动端 浏览器访问",
+            html: `
+<p>Docker 版思源里插件无法访问宿主机的文件系统，所以「添加文件」用的是浏览器上传，与桌面版无异。</p>
+<p>想把书签文件固定在工作区里随时重载（省去每次选文件）：</p>
+<ol>
+<li>把导出的 HTML 放进思源数据目录，例如 <code>data/bookmarks-chrome.html</code>
+（Docker 即挂载卷里的对应位置）。</li>
+<li>在对话框「工作区文件路径」填 <code>/data/bookmarks-chrome.html</code> → 加载。</li>
+<li>以后在浏览器里重新导出并覆盖该文件，回到思源点「加载」→「开始同步」即可。</li>
+</ol>
+<p>「打开思源自动同步」和「反向导出成书签 HTML」在规划中（第二期），当前需手动点一次加载。</p>`,
+        },
+    ];
+}
+
 /** PDF 导出与打印相关帮助 */
 export function getExportHelpTopics(): HelpTopic[] {
     return [

@@ -486,3 +486,209 @@
 .plugin-setting__section-divider {
     display: none;
 }
+
+/* ------------------------------ 浏览器书签同步 ------------------------------ */
+
+.bookmark-sync {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 12px 16px 0;
+}
+
+.bookmark-sync__config {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--b3-border-color);
+}
+
+.bookmark-sync__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.bookmark-sync__row.bookmark-sync__options {
+    gap: 16px;
+    color: var(--b3-theme-on-surface);
+    font-size: 13px;
+}
+
+.bookmark-sync__row.bookmark-sync__options label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.bookmark-sync__label {
+    flex: none;
+    font-size: 13px;
+    color: var(--b3-theme-on-surface-light);
+}
+
+.bookmark-sync__status {
+    font-size: 12px;
+    color: var(--b3-theme-primary);
+}
+
+.bookmark-sync__hint-inline {
+    font-size: 12px;
+    color: var(--b3-theme-on-surface-light);
+}
+
+.bookmark-sync__drop {
+    border: 1px dashed var(--b3-border-color);
+    border-radius: 4px;
+    padding: 14px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--b3-theme-on-surface-light);
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.bookmark-sync__drop--hover {
+    border-color: var(--b3-theme-primary);
+    background: var(--b3-theme-surface-lighter);
+    color: var(--b3-theme-primary);
+}
+
+.bookmark-sync__sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.bookmark-sync__sources:empty {
+    display: none;
+}
+
+.bookmark-sync__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--b3-theme-surface-lighter);
+    border: 1px solid var(--b3-border-color);
+    font-size: 12px;
+    color: var(--b3-theme-on-surface);
+}
+
+.bookmark-sync__chip-close {
+    border: none;
+    background: transparent;
+    color: var(--b3-theme-on-surface-light);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 12px;
+}
+
+.bookmark-sync__chip-close:hover {
+    color: var(--b3-theme-error);
+}
+
+.bookmark-sync__chip-input {
+    width: 160px;
+    font-size: 12px;
+    padding: 2px 6px;
+}
+
+.bookmark-sync__tree {
+    flex: 1 1 auto;
+    min-height: 80px;
+    overflow: auto;
+    padding: 4px 0;
+}
+
+.bookmark-sync__log {
+    flex: none;
+    max-height: 120px;
+    overflow: auto;
+    margin: 4px 0 8px;
+    padding: 6px 8px;
+    background: var(--b3-theme-surface-lighter);
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--b3-theme-on-surface-light);
+}
+
+.bookmark-sync__log:empty {
+    display: none;
+}
+
+.bookmark-sync__log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.bookmark-sync__footer {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0 12px;
+    border-top: 1px solid var(--b3-border-color);
+}
+
+.bookmark-sync__node {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: default;
+}
+
+.bookmark-sync__node:hover {
+    background: var(--b3-list-hover);
+}
+
+.bookmark-sync__toggle {
+    width: 14px;
+    flex: none;
+    text-align: center;
+    color: var(--b3-theme-on-surface-light);
+    cursor: pointer;
+    user-select: none;
+}
+
+.bookmark-sync__checkbox {
+    flex: none;
+    cursor: pointer;
+}
+
+.bookmark-sync__icon {
+    flex: none;
+}
+
+.bookmark-sync__node-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.bookmark-sync__badge {
+    flex: none;
+    font-size: 11px;
+    color: var(--b3-theme-on-surface-light);
+    background: var(--b3-theme-surface-lighter);
+    border-radius: 8px;
+    padding: 0 6px;
+}
+
+.bookmark-sync__loading,
+.bookmark-sync__empty {
+    padding: 4px 12px;
+    font-size: 12px;
+    color: var(--b3-theme-on-surface-light);
+}
