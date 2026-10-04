@@ -148,9 +148,8 @@ export class BookmarkSyncDialog {
     <div class="bookmark-sync__tree" id="bm-tree"></div>
     <div class="bookmark-sync__log" id="bm-log"></div>
     <div class="bookmark-sync__footer">
+        <button id="bm-sync-btn" class="b3-button">${this.t("bookmarkStartSync", "开始同步")}</button>
         <button id="bm-help-btn" class="b3-button b3-button--outline">${this.t("helpMenu", "使用帮助")}</button>
-        <span class="fn__space"></span>
-        <button id="bm-sync-btn" class="b3-button b3-button--text">${this.t("bookmarkStartSync", "开始同步")}</button>
     </div>
 </div>`;
     }
