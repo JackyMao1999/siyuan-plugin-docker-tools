@@ -32,6 +32,7 @@ import {
     urlValue,
 } from "./av-api";
 import { fetchPageDescription, mapWithConcurrency } from "./web-desc";
+import { BookmarkTagCategory, classifyBookmark, loadTagCategories, TAG_RULES_PATH } from "./bookmark-classify";
 
 const RECORDS_FILE = "bookmark-sync-records.json";
 
@@ -59,6 +60,8 @@ const TRIVIAL_FOLDER_NAMES = new Set([
 /** 一条待同步书签 = 解析出的条目 + 所属来源名（仅用于展示与日志，不再入库） */
 export interface SyncBookmark extends BookmarkEntry {
     source: string;
+    /** 内容分类命中的标签（同步前按规则表填充，参与 hash：改规则 → hash 变 → 自动重刷标签） */
+    categories?: string[];
 }
 
 /** 拖入过、已自动保存到工作区的书签文件副本 */
@@ -142,9 +145,9 @@ export function hashString(text: string): string {
     return h.toString(16).padStart(8, "0");
 }
 
-/** 书签内容 hash：标题 + 描述 + 标签路径（URL 是身份，不参与） */
+/** 书签内容 hash：标题 + 描述 + 文件夹路径 + 内容分类（URL 是身份，不参与） */
 export function hashBookmark(entry: SyncBookmark, withTags: boolean): string {
-    const tags = withTags ? entry.folderPath.join("/") : "";
+    const tags = withTags ? `${entry.folderPath.join("/")}|${(entry.categories || []).join(",")}` : "";
     return hashString(`${entry.title}\n${entry.description}\n${tags}`);
 }
 
@@ -352,24 +355,29 @@ function makeValue(keyID: string, columnType: string, content: string): AvValue 
 }
 
 /**
- * 标签值 = 书签文件夹层级（跳过「书签栏」等浏览器默认容器）；
- * 书签没有放进自建文件夹时，用主域名兜底，保证「自动分类」总是有得选。
- * 想得到「工具 / 网盘 / 开发 / AI / 音乐…」这类分类，在浏览器里建同名文件夹即可，
- * 文件夹改名 / 移动后重新导出同步，标签会跟着更新。
+ * 标签值组成（按序、去重、最多 4 个）：
+ *  1. 内容分类命中项（bookmark-classify 规则表：工具 / 网盘 / 开发 / AI…，可改规则文件定制）
+ *  2. 书签文件夹层级（跳过「书签栏」等浏览器默认容器，文件夹分类和用户自建习惯继续保留）
+ *  3. 两者都没命中时退回主域名兜底，保证「自动分类」总是有得选
  */
-function tagItems(entry: BookmarkEntry): { content: string; color?: string }[] {
+function tagItems(entry: SyncBookmark): { content: string; color?: string }[] {
     const items: { content: string; color?: string }[] = [];
     const added = new Set<string>();
+    const push = (name: string) => {
+        const t = (name || "").trim();
+        if (!t || added.has(t) || items.length >= 4) return;
+        added.add(t);
+        items.push({ content: t, color: optionColor(t) });
+    };
+    for (const c of entry.categories || []) push(c);
     for (const seg of entry.folderPath) {
-        const name = (seg || "").trim();
-        if (!name || TRIVIAL_FOLDER_NAMES.has(name.toLowerCase()) || added.has(name)) continue;
-        added.add(name);
-        items.push({ content: name, color: optionColor(name) });
+        if (TRIVIAL_FOLDER_NAMES.has((seg || "").trim().toLowerCase())) continue;
+        push(seg);
     }
     if (!items.length) {
         try {
             const host = new URL(entry.url).hostname.replace(/^www\./i, "");
-            if (host) items.push({ content: host, color: optionColor(host) });
+            if (host) push(host);
         } catch (e) {
             /* URL 异常时不打标签 */
         }
@@ -484,6 +492,22 @@ export class BookmarkSync {
             log(`注意：数据库里有 ${duplicateRows} 行 URL 重复，同步只认最先出现的一行。`);
         }
 
+        // ---------- 内容自动分类：按规则表（工作区可编辑）给每条书签打分类标签，先于 hash ----------
+        if (options.syncTags && entries.length) {
+            const categories: BookmarkTagCategory[] = await loadTagCategories(log);
+            for (const entry of entries) {
+                let host = "";
+                try {
+                    host = new URL(entry.url).hostname;
+                } catch (e) {
+                    host = "";
+                }
+                entry.categories = classifyBookmark(host, entry.title, categories);
+            }
+            const hit = entries.filter((x) => x.categories && x.categories.length).length;
+            log(`内容分类命中 ${hit}/${entries.length} 条（规则文件 ${TAG_RULES_PATH}，可直接编辑定制）。`);
+        }
+
         // ---------- 分类：新增 / 更新 / 跳过 ----------
         const toCreate: { entry: SyncBookmark; key: string }[] = [];
         const toUpdate: { entry: SyncBookmark; key: string; itemID: string }[] = [];
@@ -542,8 +566,8 @@ export class BookmarkSync {
                 log(`网页描述：成功 ${got} 条，${queue.length - got} 条未取到（不会写空覆盖已有描述）`);
             }
         }
-        /** 单元格生效的描述：导出文件自带 > 抓取的网页 meta > 空 */
-        const effDesc = (key: string, entry: SyncBookmark): string => entry.description || webDesc.get(key) || "";
+        /** 单元格生效的描述：导出文件自带 > 抓取的网页 meta > 书签标题兜底（不少站点是 JS 壳页没有 meta，永不留空） */
+        const effDesc = (key: string, entry: SyncBookmark): string => entry.description || webDesc.get(key) || entry.title;
         /** 组装同步记录（带上网页描述缓存） */
         const mkRecord = (key: string, entry: SyncBookmark, now: number): BookmarkSyncRecord => {
             const rec: BookmarkSyncRecord = {

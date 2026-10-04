@@ -79,11 +79,11 @@ Import bookmarks exported from Chrome / Edge / Firefox / Safari into a SiYuan **
 
 - Reads the Netscape bookmark HTML that all browsers produce via "Export bookmarks"; add files by picker or drag & drop, multiple sources in one run.
 - Dropped files are **auto-copied into the workspace at `/data/bookmarks/`** and reloaded next time the dialog opens — no paths to type, even on Docker.
-- Writes rows into a **database block** with columns: Name (primary key, first column), Link (URL column), Tags (multi-select, **auto-classified from bookmark folder hierarchy**, falls back to domain when unfiled), Description.
+- Writes rows into a **database block** with columns: Name (primary key, first column), Link (URL column), Tags (multi-select, **auto-classified by site content** into Tools / Netdisk / Resources / Work / E-books / Blog / Dev / Fun / Forum / AI / Music — edit `data/bookmarks/tag-rules.json` to customize; bookmark folder paths are added as extra tags, and the domain is used when nothing matches), Description.
 - The target database is picked from a dropdown listing all databases (hit "Refresh" after creating one).
 - **Incremental sync**: content hash per bookmark; unchanged rows are skipped, changed rows are updated in place — no duplicate rows. The same URL from multiple browsers merges into one row.
-- **One-click "Tidy columns"** (idempotent): creates missing columns, renames the primary key to "Name" and moves it first, converts SiYuan's built-in single-select "Tags" column to multi-select in place (values kept), drops leftover empty single-select clones, and orders columns Name → Link → Tags → Description.
-- **Description fetching**: when the export carries no note, the plugin can fetch each page's `<meta description>` through the kernel network proxy (cached per URL; failures stay empty and never overwrite).
+- **One-click "Tidy columns"** (runs automatically before each sync, idempotent): creates missing columns, renames the primary key to "Name" and moves it first, converts SiYuan's built-in single-select template column ("Tags" / "Single select") to multi-select in place (values kept), drops leftover empty single-select clones and the legacy "Source" column, and orders columns Name → Link → Tags → Description.
+- **Description fetching**: when the export carries no note, the plugin can fetch each page's `<meta description>` through the kernel network proxy (cached per URL; failures never overwrite). JS-shell pages without any meta fall back to the **bookmark title**, so the Description column stays filled.
 - Optional **remove vanished bookmarks**: rows whose bookmark no longer exists in the source get deleted (off by default; only rows created by the sync are removed).
 - Parsing runs entirely in the frontend, so it works on **Docker / browser / mobile**.
 
@@ -93,7 +93,7 @@ Import bookmarks exported from Chrome / Edge / Firefox / Safari into a SiYuan **
 2. Top-bar plugin icon → **Browser Bookmarks Sync** (shortcut `Ctrl+Alt+B`):
    - drop or pick the exported HTML and check the folders to import (it auto-loads next time);
    - choose the target database from the dropdown (create one first via `/database` in any document if needed);
-   - review the field mapping and hit "**Tidy columns**" to set everything up in one click (primary key renamed and moved first, built-in single-select Tags converted to multi-select, stray empty single-select clones removed).
+   - review the field mapping — an incomplete column structure is tidied automatically when you start syncing (or hit "**Tidy columns**" manually: primary key renamed and moved first, built-in single-select converted to multi-select, stray empty columns removed).
 3. Click **Start sync**. Later, re-export and drop the file once — incremental update only touches changed rows. Tick "Fetch page description" to auto-fill the Description column from each page's meta description.
 
 > 💡 Why can't the plugin read browser data directly? Plugins run inside the browser sandbox without filesystem access, so Chrome's `Bookmarks` JSON and Firefox's `places.sqlite` are unreachable — "Export bookmarks to HTML" is the only channel every browser provides. The plugin keeps an automatic copy of each dropped file in the workspace (visible in your Docker volume under `data/bookmarks/`), so no path configuration is ever needed.

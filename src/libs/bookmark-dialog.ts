@@ -144,7 +144,7 @@ export class BookmarkSyncDialog {
         </div>
         <div class="bookmark-sync__row bookmark-sync__options">
             <label><input type="checkbox" id="bm-incremental"> ${this.t("bookmarkIncremental", "增量同步")}</label>
-            <label><input type="checkbox" id="bm-tags"> ${this.t("bookmarkTags", "写入标签（按书签文件夹自动分类）")}</label>
+            <label><input type="checkbox" id="bm-tags"> ${this.t("bookmarkTags", "写入标签（按内容自动分类 + 书签文件夹）")}</label>
             <label><input type="checkbox" id="bm-fetch-desc"> ${this.t("bookmarkFetchDesc", "抓取网页描述填入「描述」列")}</label>
             <label><input type="checkbox" id="bm-remove"> ${this.t("bookmarkRemoveMissing", "清理已消失的书签")}</label>
         </div>
