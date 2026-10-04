@@ -1,12 +1,12 @@
 /*
  * 浏览器书签同步对话框
  *
- * 流程：添加书签导出文件（选择 / 拖拽 / 工作区路径）→ 勾选要同步的文件夹
- *       → 选择目标数据库 → 校对字段映射 → 开始同步。
+ * 流程：添加书签导出文件（选择 / 拖拽）→ 自动保存副本到工作区 /data/bookmarks/，
+ *       下次打开对话框自动加载 → 勾选要同步的文件夹 → 下拉选择目标数据库 → 同步。
  */
 
 import { Dialog, confirm, showMessage } from "siyuan";
-import { getBlockAttrs, getWorkspaceFileText } from "../api";
+import { getWorkspaceFileText, putWorkspaceFile, removeWorkspaceFile } from "../api";
 import {
     BookmarkEntry,
     BookmarkFile,
@@ -25,13 +25,10 @@ import {
     createMissingColumns,
     resolveColumns,
 } from "./bookmark-sync";
-import {
-    AvKey,
-    AvSearchResult,
-    getAvKeys,
-    renderAttributeView,
-    searchAttributeViews,
-} from "./av-api";
+import { AvKey, AvSearchResult, getAvKeys, searchAttributeViews } from "./av-api";
+
+/** 书签副本在工作区中的固定存放目录（Docker：宿主挂载卷内同路径可见） */
+const WORKSPACE_DIR = "/data/bookmarks";
 
 export interface BookmarkDialogDeps {
     sync: BookmarkSync;
@@ -43,6 +40,16 @@ export interface BookmarkDialogDeps {
 
 /** 当前是否处于同步中 */
 let syncing = false;
+
+/** 来源名 -> 安全文件名 */
+function safeFileName(name: string): string {
+    const cleaned = (name || "")
+        .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+        .replace(/^\.+/, "")
+        .trim()
+        .slice(0, 60);
+    return `${cleaned || "bookmarks"}.html`;
+}
 
 export class BookmarkSyncDialog {
     private deps: BookmarkDialogDeps;
@@ -56,21 +63,19 @@ export class BookmarkSyncDialog {
     private syncBtn: HTMLButtonElement;
     private dropEl: HTMLElement;
     private fileInput: HTMLInputElement;
-    private workspaceInput: HTMLInputElement;
-    private dbKeywordInput: HTMLInputElement;
     private dbSelect: HTMLSelectElement;
-    private blockIdInput: HTMLInputElement;
+    private dbStatusEl: HTMLElement;
     private columnsEl: HTMLElement;
     private ensureBtn: HTMLButtonElement;
-    private dbStatusEl: HTMLElement;
 
     private incrementalInput: HTMLInputElement;
     private tagsInput: HTMLInputElement;
-    private sourceInput: HTMLInputElement;
     private removeInput: HTMLInputElement;
 
     /** 已解析的书签文件（= 来源） */
     private files: BookmarkFile[] = [];
+    /** 来源名 -> 原始 HTML 文本（重命名来源时重新上传副本用） */
+    private rawTexts = new Map<string, string>();
     /** 搜索到的数据库候选 */
     private dbResults: AvSearchResult[] = [];
     /** 目标数据库的列定义与匹配结果 */
@@ -81,6 +86,7 @@ export class BookmarkSyncDialog {
     constructor(deps: BookmarkDialogDeps) {
         this.deps = deps;
         this.options = { ...DEFAULT_BOOKMARK_OPTIONS, ...deps.getOptions() };
+        if (!Array.isArray(this.options.savedFiles)) this.options.savedFiles = [];
 
         this.dialog = new Dialog({
             title: this.t("bookmarkSyncTitle", "浏览器书签同步"),
@@ -100,16 +106,12 @@ export class BookmarkSyncDialog {
         this.syncBtn = root.querySelector("#bm-sync-btn") as HTMLButtonElement;
         this.dropEl = root.querySelector("#bm-drop") as HTMLElement;
         this.fileInput = root.querySelector("#bm-file-input") as HTMLInputElement;
-        this.workspaceInput = root.querySelector("#bm-workspace") as HTMLInputElement;
-        this.dbKeywordInput = root.querySelector("#bm-db-keyword") as HTMLInputElement;
         this.dbSelect = root.querySelector("#bm-db") as HTMLSelectElement;
-        this.blockIdInput = root.querySelector("#bm-block-id") as HTMLInputElement;
+        this.dbStatusEl = root.querySelector("#bm-db-status") as HTMLElement;
         this.columnsEl = root.querySelector("#bm-columns") as HTMLElement;
         this.ensureBtn = root.querySelector("#bm-ensure-cols") as HTMLButtonElement;
-        this.dbStatusEl = root.querySelector("#bm-db-status") as HTMLElement;
         this.incrementalInput = root.querySelector("#bm-incremental") as HTMLInputElement;
         this.tagsInput = root.querySelector("#bm-tags") as HTMLInputElement;
-        this.sourceInput = root.querySelector("#bm-source") as HTMLInputElement;
         this.removeInput = root.querySelector("#bm-remove") as HTMLInputElement;
 
         this.bindEvents();
@@ -125,25 +127,14 @@ export class BookmarkSyncDialog {
         return `<div class="bookmark-sync b3-typography">
     <div class="bookmark-sync__config">
         <div class="bookmark-sync__drop" id="bm-drop">
-            ${this.t("bookmarkDropHint", "点击或拖拽浏览器「导出书签」生成的 HTML（可多选：Chrome / Edge / Firefox / Safari 都支持）")}
+            ${this.t("bookmarkDropHint", "点击或拖拽浏览器「导出书签」生成的 HTML（可多选），添加后自动保存到 /data/bookmarks/，下次打开自动加载")}
             <input type="file" id="bm-file-input" accept=".html,.htm,text/html" multiple class="fn__none">
-        </div>
-        <div class="bookmark-sync__row">
-            <span class="bookmark-sync__label">${this.t("bookmarkWorkspaceLabel", "工作区文件路径")}</span>
-            <input id="bm-workspace" class="b3-text-field fn__flex-1" placeholder="${this.t("bookmarkWorkspacePlaceholder", "例如 /data/bookmarks-chrome.html（Docker：先放进挂载目录）")}">
-            <button id="bm-workspace-btn" class="b3-button b3-button--outline">${this.t("bookmarkWorkspaceLoad", "加载")}</button>
         </div>
         <div class="bookmark-sync__sources" id="bm-sources"></div>
         <div class="bookmark-sync__row">
             <span class="bookmark-sync__label">${this.t("bookmarkDbLabel", "目标数据库")}</span>
-            <input id="bm-db-keyword" class="b3-text-field fn__flex-1" placeholder="${this.t("bookmarkDbPlaceholder", "数据库名称关键词，留空列出全部")}">
-            <button id="bm-db-search" class="b3-button b3-button--outline">${this.t("bookmarkDbSearch", "搜索")}</button>
-            <select id="bm-db" class="b3-select fn__size200"></select>
-        </div>
-        <div class="bookmark-sync__row">
-            <span class="bookmark-sync__label">${this.t("bookmarkBlockIdLabel", "或直接粘贴块 ID")}</span>
-            <input id="bm-block-id" class="b3-text-field fn__flex-1" placeholder="${this.t("bookmarkBlockIdPlaceholder", "数据库块的 ID（或数据库 ID）")}">
-            <button id="bm-block-id-btn" class="b3-button b3-button--outline">${this.t("bookmarkBlockIdUse", "使用")}</button>
+            <select id="bm-db" class="b3-select fn__flex-1"></select>
+            <button id="bm-db-refresh" class="b3-button b3-button--outline">${this.t("bookmarkDbRefresh", "刷新")}</button>
             <span id="bm-db-status" class="bookmark-sync__status"></span>
         </div>
         <div class="bookmark-sync__row">
@@ -153,8 +144,7 @@ export class BookmarkSyncDialog {
         </div>
         <div class="bookmark-sync__row bookmark-sync__options">
             <label><input type="checkbox" id="bm-incremental"> ${this.t("bookmarkIncremental", "增量同步")}</label>
-            <label><input type="checkbox" id="bm-tags"> ${this.t("bookmarkTags", "写入标签（文件夹路径）")}</label>
-            <label><input type="checkbox" id="bm-source"> ${this.t("bookmarkSourceCol", "写入来源列")}</label>
+            <label><input type="checkbox" id="bm-tags"> ${this.t("bookmarkTags", "写入标签（按书签文件夹自动分类）")}</label>
             <label><input type="checkbox" id="bm-remove"> ${this.t("bookmarkRemoveMissing", "清理已消失的书签")}</label>
         </div>
     </div>
@@ -172,16 +162,20 @@ export class BookmarkSyncDialog {
     private init() {
         this.incrementalInput.checked = this.options.incremental;
         this.tagsInput.checked = this.options.syncTags;
-        this.sourceInput.checked = this.options.syncSource;
         this.removeInput.checked = this.options.removeMissing;
-        this.workspaceInput.value = this.options.workspaceFile || "";
 
         if (this.options.avID) {
             this.setDbStatus(this.options.dbName || this.t("bookmarkDbSelected", "当前数据库"));
-            void this.refreshColumns();
         } else {
-            this.appendLog(this.t("bookmarkInitHint", "① 添加浏览器导出的书签文件 ② 选择目标数据库 ③ 开始同步。"));
+            this.appendLog(this.t("bookmarkInitHint", "① 添加浏览器导出的书签文件 ② 下拉选择目标数据库 ③ 开始同步。"));
         }
+        void this.refreshColumns();
+
+        // 打开对话框即列出全部数据库；再自动加载上次保存的工作区副本
+        void (async () => {
+            await this.loadDatabases();
+            await this.autoLoadWorkspaceFiles();
+        })();
     }
 
     private bindEvents() {
@@ -203,31 +197,12 @@ export class BookmarkSyncDialog {
             void this.addFiles(e.dataTransfer?.files || null);
         });
 
-        (this.dialog.element.querySelector("#bm-workspace-btn") as HTMLElement).onclick = () => {
-            void this.loadFromWorkspace();
+        (this.dialog.element.querySelector("#bm-db-refresh") as HTMLElement).onclick = () => {
+            void this.loadDatabases();
         };
-        this.workspaceInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                void this.loadFromWorkspace();
-            }
-        });
-
-        (this.dialog.element.querySelector("#bm-db-search") as HTMLElement).onclick = () => {
-            void this.searchDb();
-        };
-        this.dbKeywordInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                void this.searchDb();
-            }
-        });
         this.dbSelect.onchange = () => {
             const picked = this.dbResults[Number(this.dbSelect.value)];
             if (picked) void this.pickDatabase(picked);
-        };
-        (this.dialog.element.querySelector("#bm-block-id-btn") as HTMLElement).onclick = () => {
-            void this.usePastedId();
         };
         this.ensureBtn.onclick = () => {
             void this.ensureColumns();
@@ -256,12 +231,8 @@ export class BookmarkSyncDialog {
         for (const input of [this.incrementalInput, this.removeInput]) {
             input.onchange = () => this.collectOptions();
         }
-        // 「标签」「来源」开关会改变字段匹配结果（缺失列是否计入），需要刷新映射展示
+        // 「标签」开关会改变字段匹配结果（缺失列是否计入），需要刷新映射展示
         this.tagsInput.onchange = () => {
-            this.collectOptions();
-            void this.refreshColumns();
-        };
-        this.sourceInput.onchange = () => {
             this.collectOptions();
             void this.refreshColumns();
         };
@@ -270,9 +241,7 @@ export class BookmarkSyncDialog {
     private collectOptions() {
         this.options.incremental = this.incrementalInput.checked;
         this.options.syncTags = this.tagsInput.checked;
-        this.options.syncSource = this.sourceInput.checked;
         this.options.removeMissing = this.removeInput.checked;
-        this.options.workspaceFile = this.workspaceInput.value.trim();
     }
 
     // ------------------------------ 来源文件 ------------------------------
@@ -283,7 +252,9 @@ export class BookmarkSyncDialog {
         for (const file of Array.from(list)) {
             try {
                 const text = await file.text();
-                this.addParsed(parseBookmarkHtml(text, this.labelOf(file.name)));
+                const parsed = parseBookmarkHtml(text, this.labelOf(file.name));
+                this.upsertFile(parsed, text);
+                await this.persistCopy(parsed.source, text);
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 this.appendLog(`${this.t("bookmarkParseFailed", "解析失败")}：${file.name} — ${msg}`);
@@ -296,33 +267,56 @@ export class BookmarkSyncDialog {
         return (name || "").replace(/\.(html?|xml)$/i, "") || "书签";
     }
 
-    /** 从工作区路径加载书签文件（Docker 场景：文件放在挂载目录里） */
-    private async loadFromWorkspace() {
-        const path = this.workspaceInput.value.trim();
-        if (!path) {
-            showMessage(this.t("bookmarkNoWorkspacePath", "请先填写工作区文件路径"), 4000, "error");
-            return;
-        }
+    /**
+     * 把书签 HTML 文本保存到工作区固定目录，并记录在配置里；
+     * 同名来源的旧副本会先删除。失败只提示，不影响本次同步。
+     */
+    private async persistCopy(source: string, text: string) {
         try {
-            const text = await getWorkspaceFileText(path);
-            this.addParsed(parseBookmarkHtml(text, this.labelOf(path.split("/").pop() || path)));
-            this.collectOptions();
+            const old = this.options.savedFiles.find((f) => f.source === source);
+            if (old) await removeWorkspaceFile(old.path);
+            const savedPath = await putWorkspaceFile(text, safeFileName(source), WORKSPACE_DIR);
+            const entry = { source, path: savedPath };
+            const at = this.options.savedFiles.findIndex((f) => f.source === source);
+            if (at >= 0) this.options.savedFiles.splice(at, 1, entry);
+            else this.options.savedFiles.push(entry);
             await this.deps.saveOptions(this.options);
+            this.appendLog(`已保存工作区副本：${entry.path}`);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            this.appendLog(`加载工作区文件失败：${msg}`);
-            showMessage(`加载失败：${msg}`, 5000, "error");
+            this.appendLog(`⚠️ 保存工作区副本失败（不影响本次同步）：${msg}`);
         }
     }
 
-    private addParsed(file: BookmarkFile) {
+    /** 打开对话框时自动加载上次保存的工作区副本 */
+    private async autoLoadWorkspaceFiles() {
+        const entries = [...this.options.savedFiles];
+        for (const entry of entries) {
+            try {
+                const text = await getWorkspaceFileText(entry.path);
+                this.upsertFile(parseBookmarkHtml(text, entry.source), text);
+                this.appendLog(`已自动加载工作区副本：${entry.source}`);
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                this.appendLog(`⚠️ 自动加载「${entry.source}」失败：${msg}（重新拖入文件即可恢复）`);
+                if (/HTTP 404/.test(msg)) {
+                    this.options.savedFiles = this.options.savedFiles.filter((f) => f !== entry);
+                    await this.deps.saveOptions(this.options);
+                }
+            }
+        }
+    }
+
+    /** 解析结果入列：同名来源 = 替换（重新导出场景） */
+    private upsertFile(file: BookmarkFile, text: string) {
         const existing = this.files.findIndex((f) => f.source === file.source);
         if (existing >= 0) {
             this.files.splice(existing, 1, file);
-            this.appendLog(`注意：来源「${file.source}」已存在，本次添加已替换它（要同时导入多个浏览器，请双击来源标签改名，或先重命名导出文件）。`);
+            this.appendLog(`注意：来源「${file.source}」已存在，本次添加已替换它（要同时导入多个浏览器，请双击来源标签改名）。`);
         } else {
             this.files.push(file);
         }
+        this.rawTexts.set(file.source, text);
         this.appendLog(
             `已解析「${file.source}」：${file.entryCount} 条书签` +
             (file.skipped ? `，过滤 ${file.skipped} 条` : "") +
@@ -332,59 +326,16 @@ export class BookmarkSyncDialog {
         this.renderTree();
     }
 
-    /** 双击标签重命名来源；重名时自动加序号 */
-    private renameSource(file: BookmarkFile) {
-        const input = document.createElement("input");
-        input.className = "b3-text-field bookmark-sync__chip-input";
-        input.value = file.source;
-        const chip = this.sourcesEl;
-        chip.innerHTML = "";
-        this.files.forEach((f) => {
-            const el = document.createElement("span");
-            el.className = "bookmark-sync__chip";
-            if (f === file) {
-                el.appendChild(input);
-            } else {
-                const label = document.createElement("span");
-                label.textContent = `${f.source}（${f.entryCount}）`;
-                el.appendChild(label);
-            }
-            chip.appendChild(el);
-        });
-        input.focus();
-        input.select();
-        let committed = false;
-        const commit = () => {
-            if (committed) return;
-            committed = true;
-            let name = input.value.trim() || file.source;
-            const taken = new Set(this.files.filter((f) => f !== file).map((f) => f.source));
-            if (taken.has(name)) {
-                let i = 2;
-                while (taken.has(`${name} (${i})`)) i++;
-                name = `${name} (${i})`;
-            }
-            if (name !== file.source) {
-                file.source = name;
-                this.appendLog(`来源已重命名，同步将按新名称匹配（旧名称的行在开启「来源列」时会被视为不同来源）。`);
-            }
-            this.renderSources();
-            this.renderTree();
-        };
-        input.addEventListener("blur", commit);
-        input.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                commit();
-            } else if (e.key === "Escape") {
-                committed = true;
-                this.renderSources();
-            }
-        });
-    }
-
     private removeFile(index: number) {
-        this.files.splice(index, 1);
+        const [file] = this.files.splice(index, 1);
+        if (!file) return;
+        const entry = this.options.savedFiles.find((f) => f.source === file.source);
+        if (entry) {
+            this.options.savedFiles = this.options.savedFiles.filter((f) => f !== entry);
+            void removeWorkspaceFile(entry.path);
+            void this.deps.saveOptions(this.options);
+        }
+        this.rawTexts.delete(file.source);
         this.renderSources();
         this.renderTree();
     }
@@ -406,6 +357,71 @@ export class BookmarkSyncDialog {
             close.onclick = () => this.removeFile(index);
             chip.appendChild(close);
             this.sourcesEl.appendChild(chip);
+        });
+    }
+
+    /** 双击标签重命名来源；重名时自动加序号，并同步迁移工作区副本 */
+    private renameSource(file: BookmarkFile) {
+        const input = document.createElement("input");
+        input.className = "b3-text-field bookmark-sync__chip-input";
+        input.value = file.source;
+        this.sourcesEl.innerHTML = "";
+        this.files.forEach((f) => {
+            const el = document.createElement("span");
+            el.className = "bookmark-sync__chip";
+            if (f === file) {
+                el.appendChild(input);
+            } else {
+                const label = document.createElement("span");
+                label.textContent = `${f.source}（${f.entryCount}）`;
+                el.appendChild(label);
+            }
+            this.sourcesEl.appendChild(el);
+        });
+        input.focus();
+        input.select();
+        let committed = false;
+        const commit = () => {
+            if (committed) return;
+            committed = true;
+            let name = input.value.trim() || file.source;
+            const taken = new Set(this.files.filter((f) => f !== file).map((f) => f.source));
+            if (taken.has(name)) {
+                let i = 2;
+                while (taken.has(`${name} (${i})`)) i++;
+                name = `${name} (${i})`;
+            }
+            const oldName = file.source;
+            if (name !== oldName) {
+                file.source = name;
+                const text = this.rawTexts.get(oldName);
+                this.rawTexts.delete(oldName);
+                if (text !== undefined) {
+                    this.rawTexts.set(name, text);
+                    void (async () => {
+                        // 迁移工作区副本：按新名字重新上传，删除旧文件
+                        const entry = this.options.savedFiles.find((f) => f.source === oldName);
+                        if (entry) {
+                            await removeWorkspaceFile(entry.path);
+                            this.options.savedFiles = this.options.savedFiles.filter((f) => f !== entry);
+                        }
+                        await this.persistCopy(name, text);
+                        this.appendLog(`来源已重命名为「${name}」。`);
+                    })();
+                }
+            }
+            this.renderSources();
+            this.renderTree();
+        };
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                commit();
+            } else if (e.key === "Escape") {
+                committed = true;
+                this.renderSources();
+            }
         });
     }
 
@@ -609,27 +625,21 @@ export class BookmarkSyncDialog {
         if (this.dbStatusEl) this.dbStatusEl.textContent = text;
     }
 
-    private async searchDb() {
+    /** 列出全部数据库（avID 去重）；保留当前选中项 */
+    private async loadDatabases() {
         try {
-            const keyword = this.dbKeywordInput.value.trim();
-            this.dbResults = await searchAttributeViews(keyword);
-            this.dbSelect.innerHTML = "";
-            if (!this.dbResults.length) {
-                const option = document.createElement("option");
-                option.value = "";
-                option.textContent = this.t("bookmarkDbNone", "（未找到数据库：先在某个文档里插入「数据库」）");
-                this.dbSelect.appendChild(option);
-                return;
-            }
-            // 同名数据库在不同文档里会出现多条搜索结果，按 avID 去重
+            const all = await searchAttributeViews("");
             const unique = new Map<string, AvSearchResult>();
-            for (const r of this.dbResults) {
-                if (!unique.has(r.avID)) unique.set(r.avID, r);
+            for (const r of all) {
+                if (r.avID && !unique.has(r.avID)) unique.set(r.avID, r);
             }
             this.dbResults = Array.from(unique.values());
+            this.dbSelect.innerHTML = "";
             const blank = document.createElement("option");
             blank.value = "";
-            blank.textContent = this.t("bookmarkDbPick", "— 选择数据库 —");
+            blank.textContent = this.dbResults.length
+                ? this.t("bookmarkDbPick", "— 选择数据库 —")
+                : this.t("bookmarkDbNone", "（未找到数据库：先在某个文档里插入「数据库」）");
             this.dbSelect.appendChild(blank);
             this.dbResults.forEach((r, index) => {
                 const option = document.createElement("option");
@@ -637,14 +647,20 @@ export class BookmarkSyncDialog {
                 option.textContent = `${r.avName || r.avID}${r.hPath ? ` — ${r.hPath}` : ""}`;
                 this.dbSelect.appendChild(option);
             });
-            if (this.options.avID) {
-                const at = this.dbResults.findIndex((r) => r.avID === this.options.avID);
-                if (at >= 0) this.dbSelect.value = String(at);
+            const at = this.dbResults.findIndex((r) => r.avID === this.options.avID);
+            if (at >= 0) {
+                this.dbSelect.value = String(at);
+            } else if (this.options.avID) {
+                // 上次选择的数据库不在列表里（可能被删除了）：保留状态但明确提示
+                const stale = document.createElement("option");
+                stale.value = "-1";
+                stale.textContent = `${this.options.dbName || this.options.avID}${this.t("bookmarkDbStale", "（未在列表中找到，可能已删除）")}`;
+                stale.selected = true;
+                this.dbSelect.appendChild(stale);
             }
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            this.appendLog(`搜索数据库失败：${msg}`);
-            showMessage(`搜索数据库失败：${msg}`, 5000, "error");
+            this.appendLog(`读取数据库列表失败：${msg}`);
         }
     }
 
@@ -658,57 +674,13 @@ export class BookmarkSyncDialog {
         void this.refreshColumns();
     }
 
-    /** 支持直接粘贴「数据库块 ID」或「数据库 ID」 */
-    private async usePastedId() {
-        const id = this.blockIdInput.value.trim();
-        if (!id) {
-            showMessage(this.t("bookmarkBlockIdEmpty", "请先粘贴 ID"), 3000, "error");
-            return;
-        }
-        try {
-            let avID = "";
-            let blockID = "";
-            const attrs = await getBlockAttrs(id);
-            if (attrs && attrs["av-id"]) {
-                blockID = id;
-                avID = attrs["av-id"];
-            } else {
-                // 可能贴的是数据库 ID 本身
-                const keys = await getAvKeys(id);
-                if (!keys.length) throw new Error(this.t("bookmarkIdNotDb", "这个 ID 不是数据库块，也不是数据库 ID"));
-                avID = id;
-                blockID = "";
-            }
-            // 快速验证可读，顺便拿数据库名
-            let dbName = "";
-            try {
-                const rendered = await renderAttributeView(avID, blockID, 1, 1);
-                dbName = rendered?.av?.name || "";
-            } catch (e) {
-                // 名称拿不到不影响同步
-            }
-            this.options.avID = avID;
-            this.options.blockID = blockID;
-            this.options.dbName = dbName;
-            this.columnsDirty = true;
-            this.setDbStatus(dbName || avID.slice(0, 8));
-            await this.deps.saveOptions(this.options);
-            void this.refreshColumns();
-            showMessage(this.t("bookmarkDbSet", "已设置目标数据库"), 3000);
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            this.appendLog(`设置目标数据库失败：${msg}`);
-            showMessage(`设置目标数据库失败：${msg}`, 5000, "error");
-        }
-    }
-
     // ------------------------------ 字段映射 ------------------------------
 
     private colName(keyID: string): string {
         return this.keys.find((k) => k.id === keyID)?.name || keyID;
     }
 
-    /** 读取列定义并自动匹配五个字段，结果展示在「字段映射」行 */
+    /** 读取列定义并自动匹配字段，结果展示在「字段映射」行 */
     private async refreshColumns() {
         if (!this.options.avID) return;
         try {
@@ -716,7 +688,7 @@ export class BookmarkSyncDialog {
                 this.keys = await getAvKeys(this.options.avID);
                 this.columnsDirty = false;
             }
-            const cols = resolveColumns(this.keys, this.options.syncTags, this.options.syncSource);
+            const cols = resolveColumns(this.keys, this.options.syncTags);
             this.columns = cols;
 
             const parts: string[] = [];
@@ -724,7 +696,6 @@ export class BookmarkSyncDialog {
             if (cols.url) parts.push(`${this.t("bookmarkColUrl", "网站链接")}→${this.colName(cols.url)}`);
             if (cols.desc) parts.push(`${this.t("bookmarkColDesc", "描述")}→${this.colName(cols.desc)}`);
             if (cols.tags && this.options.syncTags) parts.push(`${this.t("bookmarkColTags", "标签")}→${this.colName(cols.tags)}`);
-            if (cols.source && this.options.syncSource) parts.push(`${this.t("bookmarkColSource", "来源")}→${this.colName(cols.source)}`);
             const labels = cols.missing.map((m) => m.label);
             if (labels.length) parts.push(`${this.t("bookmarkColMissing", "缺失")}：${labels.join("、")}`);
 

@@ -77,23 +77,24 @@ Import bookmarks exported from Chrome / Edge / Firefox / Safari into a SiYuan **
 
 ### Features
 
-- Reads the Netscape bookmark HTML that all browsers produce via "Export bookmarks". Add files by picker, drag & drop, or a **workspace path**; multiple sources in one run.
-- Writes rows into a **database block** with field mapping: Name (primary key), Link (URL column), Tags (multi-select, from the bookmark folder path), Description, Source (which browser).
-- **Incremental sync**: content hash per bookmark; unchanged rows are skipped, changed rows are updated in place — no duplicate rows.
-- **One-click column creation** for missing Link / Description / Tags / Source columns.
+- Reads the Netscape bookmark HTML that all browsers produce via "Export bookmarks"; add files by picker or drag & drop, multiple sources in one run.
+- Dropped files are **auto-copied into the workspace at `/data/bookmarks/`** and reloaded next time the dialog opens — no paths to type, even on Docker.
+- Writes rows into a **database block** with field mapping: Name (primary key), Link (URL column), Tags (multi-select, **auto-classified from bookmark folder hierarchy**), Description.
+- The target database is picked from a dropdown listing all databases (hit "Refresh" after creating one).
+- **Incremental sync**: content hash per bookmark; unchanged rows are skipped, changed rows are updated in place — no duplicate rows. The same URL from multiple browsers merges into one row.
+- **One-click column creation** for missing Link / Description / Tags columns.
 - Optional **remove vanished bookmarks**: rows whose bookmark no longer exists in the source get deleted (off by default; only rows created by the sync are removed).
 - Parsing runs entirely in the frontend, so it works on **Docker / browser / mobile**.
 
 ### Setup
 
 1. **Export bookmarks** to an HTML file from your browser's bookmark manager (see the built-in Help for each browser's entry point).
-2. In SiYuan, type `/database` in any document to insert a Database block.
-3. Top-bar plugin icon → **Browser Bookmarks Sync** (shortcut `Ctrl+Alt+B`):
-   - add the exported HTML (picker / drag & drop / workspace path) and check the folders to import;
-   - search and pick the target database (or paste its block ID);
+2. Top-bar plugin icon → **Browser Bookmarks Sync** (shortcut `Ctrl+Alt+B`):
+   - drop or pick the exported HTML and check the folders to import (it auto-loads next time);
+   - choose the target database from the dropdown (create one first via `/database` in any document if needed);
    - review the field mapping and click "Create missing columns" if needed.
-4. Click **Start sync**. Run again any time for an incremental update.
+3. Click **Start sync**. Later, re-export and drop the file once — incremental update only touches changed rows.
 
-> 💡 Why can't the plugin read browser data directly? Plugins run inside the browser sandbox without filesystem access, so Chrome's `Bookmarks` JSON and Firefox's `places.sqlite` are unreachable — "Export bookmarks to HTML" is the only channel every browser provides. For a semi-automatic flow: keep the exported file in a mounted folder (e.g. `/data/bookmarks.html`) and load it via the workspace path.
+> 💡 Why can't the plugin read browser data directly? Plugins run inside the browser sandbox without filesystem access, so Chrome's `Bookmarks` JSON and Firefox's `places.sqlite` are unreachable — "Export bookmarks to HTML" is the only channel every browser provides. The plugin keeps an automatic copy of each dropped file in the workspace (visible in your Docker volume under `data/bookmarks/`), so no path configuration is ever needed.
 
 > One-way import (browser → SiYuan) only; exporting a SiYuan database back to a bookmarks HTML and scheduled auto-sync are planned for later versions.

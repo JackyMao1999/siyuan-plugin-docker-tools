@@ -264,6 +264,51 @@ export async function getWorkspaceFileText(path: string): Promise<string> {
     return text;
 }
 
+/** 确保工作区目录存在（已存在时内核会报错，忽略即可） */
+async function ensureWorkspaceDir(dir: string): Promise<void> {
+    try {
+        await request("/api/file/createDir", { path: dir });
+    } catch {
+        // 忽略：目录已存在或无权限时交由后续 putFile 报错
+    }
+}
+
+/**
+ * 把文本 / Blob 上传保存到工作区目录（/api/file/putFile，multipart）。
+ * 返回内核实际保存的路径（重名时内核会自动改名）。
+ * Docker 部署同样可用：宿主机的挂载卷里能看到对应文件。
+ */
+export async function putWorkspaceFile(content: string | Blob, fileName: string, dirPath: string): Promise<string> {
+    const blob = typeof content === "string" ? new Blob([content], { type: "text/html" }) : content;
+    await ensureWorkspaceDir(dirPath);
+    const form = new FormData();
+    form.append("file", blob, fileName);
+    form.append("path", dirPath);
+    const headers: Record<string, string> = {};
+    const token = (window as any)?.siyuan?.config?.api?.token;
+    if (token) {
+        headers["Authorization"] = `Token ${token}`;
+    }
+    const response = await fetch("/api/file/putFile", { method: "POST", headers, body: form });
+    if (!response.ok) {
+        throw new Error(`上传失败（HTTP ${response.status}）：${dirPath}/${fileName}`);
+    }
+    const json = await response.json();
+    if (!json || json.code !== 0) {
+        throw new Error(`上传失败：${json?.msg || "未知错误"}`);
+    }
+    return json.data || `${dirPath}/${fileName}`;
+}
+
+/** 删除工作区文件（尽力而为：文件不存在时静默） */
+export async function removeWorkspaceFile(path: string): Promise<void> {
+    try {
+        await request("/api/file/removeFile", { path });
+    } catch {
+        // 忽略
+    }
+}
+
 export const getFileBlob = async (path: string): Promise<Blob | null> => {
     const response = await fetch('/api/file/getFile', {
         method: 'POST',

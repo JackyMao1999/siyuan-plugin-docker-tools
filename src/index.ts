@@ -475,7 +475,7 @@ export default class DocExportPlugin extends Plugin {
             value: "",
             type: "hint",
             title: this.i18n.bookmarkHintTitle || "浏览器书签同步：使用提示",
-            description: this.i18n.bookmarkHintDesc || "先在浏览器里「导出书签」为 HTML 文件；思源里插入一个数据库块，字段建议：网站名（主键）、网站链接（链接类型）、描述、标签（多选）、来源（文本）。缺列可在对话框里一键创建。"
+            description: this.i18n.bookmarkHintDesc || "先在浏览器里「导出书签」为 HTML 文件；思源里插入一个数据库块，字段建议：网站名（主键）、网站链接（链接类型）、标签（多选，按书签文件夹自动分类）、描述。缺列可在对话框里一键创建。拖入的书签文件会自动保存副本到工作区 /data/bookmarks/，下次打开自动加载。"
         });
 
     }

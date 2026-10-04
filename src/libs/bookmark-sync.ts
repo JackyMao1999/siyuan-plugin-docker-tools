@@ -1,9 +1,8 @@
 /*
  * 浏览器书签 -> 思源数据库 同步引擎
  *
- * 行身份 = 规范化 URL（勾选「来源」列时 = URL + 来源名），直接以数据库实际内容为事实源：
- * 每次同步先读取全部现有行（原始 keyValues，视图筛选不影响），
- * 再决定「新增 / 更新 / 跳过 / 清理」。
+ * 行身份 = 规范化 URL，直接以数据库实际内容为事实源：每次同步先读取全部现有行
+ * （优先原始 keyValues，不受视图筛选影响），再决定「新增 / 更新 / 跳过 / 清理」。
  * 同步记录（bookmark-sync-records.json）只保存内容 hash，用于增量跳过。
  */
 
@@ -31,39 +30,44 @@ import {
 
 const RECORDS_FILE = "bookmark-sync-records.json";
 
-/** 一条待同步书签 = 解析出的条目 + 所属来源（浏览器 / 文件名） */
+/** 一条待同步书签 = 解析出的条目 + 所属来源名（仅用于展示与日志，不再入库） */
 export interface SyncBookmark extends BookmarkEntry {
     source: string;
+}
+
+/** 拖入过、已自动保存到工作区的书签文件副本 */
+export interface SavedBookmarkFile {
+    /** 来源显示名（= 导出文件名去后缀，可双击重命名） */
+    source: string;
+    /** 工作区内的副本路径，如 /data/bookmarks/bookmarks.html */
+    path: string;
 }
 
 export interface BookmarkSyncOptions {
     /** 目标数据库 ID */
     avID: string;
-    /** 承载数据库的块 ID（粘贴 avID 时可为空） */
+    /** 承载数据库的块 ID（可能为空） */
     blockID: string;
     /** 目标数据库名（仅展示用） */
     dbName: string;
-    /** 上次使用的工作区书签文件路径（快捷加载） */
-    workspaceFile: string;
+    /** 自动保存过工作区副本的书签文件 */
+    savedFiles: SavedBookmarkFile[];
     /** 增量同步：内容未变的书签跳过 */
     incremental: boolean;
     /** 清理：来源文件里已消失、且是我们同步进去的行，删除对应记录 */
     removeMissing: boolean;
-    /** 把书签所在文件夹路径写入「标签」列 */
+    /** 把书签所在文件夹路径写入「标签」列（自动分类） */
     syncTags: boolean;
-    /** 把来源名写入「来源」列（同时让同一 URL 在不同浏览器各留一行） */
-    syncSource: boolean;
 }
 
 export const DEFAULT_BOOKMARK_OPTIONS: BookmarkSyncOptions = {
     avID: "",
     blockID: "",
     dbName: "",
-    workspaceFile: "",
+    savedFiles: [],
     incremental: true,
     removeMissing: false,
     syncTags: true,
-    syncSource: true,
 };
 
 export interface BookmarkSyncRecord {
@@ -88,17 +92,13 @@ export interface ResolvedColumns {
     url: string;
     desc: string;
     tags: string;
-    source: string;
     types: Record<string, string>;
     missing: { label: string; name: string; type: string }[];
 }
 
-const SOURCE_SEP = "\u0000src:";
-
-/** 同步记录 / 行匹配用的键 */
-export function bookmarkRecordKey(url: string, source: string, useSource: boolean): string {
-    const u = normalizeUrlKey(url);
-    return useSource && source ? `${u}${SOURCE_SEP}${source}` : u;
+/** 同步记录 / 行匹配用的键 = 规范化 URL */
+export function bookmarkRecordKey(url: string): string {
+    return normalizeUrlKey(url);
 }
 
 /** FNV-1a 32 位 hash（十六进制），内容变化检测够用 */
@@ -126,47 +126,42 @@ function optionColor(text: string): string {
 /**
  * 自动匹配目标数据库的列：
  * 主键 = block 列；网站链接 = url 列（或名字像链接的文本列）；
- * 描述 / 标签 / 来源按列名关键词匹配，匹配不到进 missing。
+ * 描述按列名匹配文本列；标签只匹配「多选」列（单选列不参与，避免写多值失败）。
+ * 匹配不到进 missing，由对话框一键创建。
  */
-export function resolveColumns(keys: AvKey[], wantTags: boolean, wantSource: boolean): ResolvedColumns {
+export function resolveColumns(keys: AvKey[], wantTags: boolean): ResolvedColumns {
     const types: Record<string, string> = {};
     for (const k of keys) types[k.id] = k.type || "text";
 
-    const byName = (types_: string[], re: RegExp) =>
-        keys.find((k) => types_.includes(k.type) && re.test(k.name || "")) || null;
-
     const nameKey = keys.find((k) => k.type === "block") || null;
 
-    let urlKey =
+    const urlKey =
         keys.find((k) => k.type === "url") ||
-        byName(["text"], /链接|网址|url|link|href/i) ||
+        keys.find((k) => k.type === "text" && /链接|网址|url|link|href/i.test(k.name || "")) ||
         null;
 
-    let descKey = byName(["text"], /描述|说明|备注|desc|note/i) || null;
-    let tagsKey =
-        byName(["mSelect", "select"], /标签|分类|目录|文件夹|tag|folder|categor/i) ||
+    const descKey = keys.find((k) => k.type === "text" && /描述|说明|备注|desc|note/i.test(k.name || "")) || null;
+    const tagsKey =
+        keys.find((k) => k.type === "mSelect" && /标签|分类|目录|文件夹|tag|folder|categor/i.test(k.name || "")) ||
         keys.find((k) => k.type === "mSelect") ||
         null;
-    let sourceKey = byName(["text"], /来源|浏览器|浏览器名|source|browser/i) || null;
 
     const missing: ResolvedColumns["missing"] = [];
     if (!urlKey) missing.push({ label: "网站链接", name: "网站链接", type: "url" });
     if (!descKey) missing.push({ label: "描述", name: "描述", type: "text" });
     if (wantTags && !tagsKey) missing.push({ label: "标签", name: "标签", type: "mSelect" });
-    if (wantSource && !sourceKey) missing.push({ label: "来源", name: "来源", type: "text" });
 
     return {
         name: nameKey?.id || "",
         url: urlKey?.id || "",
         desc: descKey?.id || "",
         tags: tagsKey?.id || "",
-        source: sourceKey?.id || "",
         types,
         missing,
     };
 }
 
-/** 一键创建缺失列，返回创建好的列定义列表 */
+/** 一键创建缺失列，返回创建好的列名列表 */
 export async function createMissingColumns(
     avID: string,
     blockID: string,
@@ -185,6 +180,18 @@ function makeValue(keyID: string, columnType: string, content: string): AvValue 
     if (columnType === "url") return urlValue(keyID, content);
     if (columnType === "block") return blockValue(keyID, content);
     return textValue(keyID, content);
+}
+
+/** 标签值：文件夹路径的每一层 = 一个多选项 */
+function tagItems(entry: BookmarkEntry): { content: string; color?: string }[] {
+    const items: { content: string; color?: string }[] = [];
+    const added = new Set<string>();
+    for (const seg of entry.folderPath) {
+        if (!seg || added.has(seg)) continue;
+        added.add(seg);
+        items.push({ content: seg, color: optionColor(seg) });
+    }
+    return items;
 }
 
 export class BookmarkSync {
@@ -219,7 +226,7 @@ export class BookmarkSync {
     }
 
     /**
-     * 执行同步：entries = 勾选后的全部书签（含来源）。
+     * 执行同步：entries = 勾选后的全部书签。
      * log / onProgress 由对话框注入，用于进度展示。
      */
     async sync(
@@ -235,14 +242,12 @@ export class BookmarkSync {
         log(`读取数据库列定义（${entries.length} 条书签待比对）...`);
         const keys = await getAvKeys(options.avID);
         if (!keys.length) throw new Error("读取数据库列失败：请确认目标是一个数据库，且当前账号可编辑");
-        const cols = resolveColumns(keys, options.syncTags, options.syncSource);
+        const cols = resolveColumns(keys, options.syncTags);
         if (!cols.name) throw new Error("目标数据库缺少主键（标题）列，请检查数据库结构");
         if (!cols.url) throw new Error('目标数据库缺少「网站链接」列：点「创建缺失列」一键补建');
 
-        // ---------- 读取数据库现有行，按身份键归组 ----------
-        const dbAny = new Map<string, string>(); // 规范化 URL -> itemID（不分来源，先出现者优先）
-        const dbQual = new Map<string, string>(); // URL+来源 -> itemID
-        const dbBare = new Map<string, string>(); // 来源列为空的行
+        // ---------- 读取数据库现有行（URL -> itemID） ----------
+        const dbAny = new Map<string, string>();
         const dbTitle = new Map<string, string>(); // itemID -> 当前主键标题（避免无谓重写）
         let duplicateRows = 0;
         log("正在读取数据库现有条目...");
@@ -266,11 +271,9 @@ export class BookmarkSync {
         }
         for (const row of dbRows) {
             let url = "";
-            let source = "";
             let title = "";
             for (const v of row.values) {
                 if (v.keyID === cols.url) url = cellText(v);
-                else if (cols.source && v.keyID === cols.source) source = cellText(v);
                 else if (v.keyID === cols.name) title = cellText(v);
             }
             dbTitle.set(row.itemID, title);
@@ -278,24 +281,12 @@ export class BookmarkSync {
             if (!u) continue; // 手工添加的空链接行不参与
             if (dbAny.has(u)) duplicateRows++;
             else dbAny.set(u, row.itemID);
-            if (source) {
-                if (!dbQual.has(`${u}${SOURCE_SEP}${source}`)) dbQual.set(`${u}${SOURCE_SEP}${source}`, row.itemID);
-            } else if (!dbBare.has(u)) {
-                dbBare.set(u, row.itemID);
-            }
         }
         if (duplicateRows > 0) {
             log(`注意：数据库里有 ${duplicateRows} 行 URL 重复，同步只认最先出现的一行。`);
         }
 
         // ---------- 分类：新增 / 更新 / 跳过 ----------
-        const useSource = options.syncSource && !!cols.source;
-        const lookup = (entry: SyncBookmark): string => {
-            const u = normalizeUrlKey(entry.url);
-            if (useSource) return dbQual.get(`${u}${SOURCE_SEP}${entry.source}`) || dbBare.get(u) || "";
-            return dbAny.get(u) || "";
-        };
-
         const toCreate: { entry: SyncBookmark; key: string }[] = [];
         const toUpdate: { entry: SyncBookmark; key: string; itemID: string }[] = [];
         const sourceKeys = new Set<string>();
@@ -303,14 +294,15 @@ export class BookmarkSync {
         /** 本次来源仍能命中（或刚创建）的行，清理阶段绝不碰 */
         const touched = new Set<string>();
         for (const entry of entries) {
-            const key = bookmarkRecordKey(entry.url, entry.source, useSource);
+            const key = bookmarkRecordKey(entry.url);
             sourceKeys.add(key);
+            if (!key) continue;
             if (seen.has(key)) {
-                summary.skipped++; // 同一批里身份相同（跨来源且未开来源列时会走到这）
+                summary.skipped++; // 同一批里 URL 相同（跨浏览器重复书签）合并为一行
                 continue;
             }
             seen.add(key);
-            const itemID = lookup(entry);
+            const itemID = dbAny.get(key) || "";
             if (itemID) {
                 touched.add(itemID);
                 const record = this.records[key];
@@ -336,17 +328,10 @@ export class BookmarkSync {
                 const values: AvValue[] = [blockValue(cols.name, entry.title)];
                 values.push(makeValue(cols.url, cols.types[cols.url] || "url", entry.url));
                 if (cols.desc && entry.description) values.push(textValue(cols.desc, entry.description));
-                if (cols.tags && options.syncTags && entry.folderPath.length) {
-                    const items = [];
-                    const added = new Set<string>();
-                    for (const seg of entry.folderPath) {
-                        if (!seg || added.has(seg)) continue;
-                        added.add(seg);
-                        items.push({ content: seg, color: optionColor(seg) });
-                    }
+                if (cols.tags && options.syncTags) {
+                    const items = tagItems(entry);
                     if (items.length) values.push(selectValue(cols.tags, items));
                 }
-                if (cols.source && options.syncSource) values.push(textValue(cols.source, entry.source));
                 return values;
             });
 
@@ -387,20 +372,10 @@ export class BookmarkSync {
                 }
                 if (cols.desc) cells.push({ keyID: cols.desc, itemID: item.itemID, value: textValue(cols.desc, item.entry.description) });
                 if (cols.tags && options.syncTags) {
-                    const items = [];
-                    const added = new Set<string>();
-                    for (const seg of item.entry.folderPath) {
-                        if (!seg || added.has(seg)) continue;
-                        added.add(seg);
-                        items.push({ content: seg, color: optionColor(seg) });
-                    }
-                    cells.push({ keyID: cols.tags, itemID: item.itemID, value: selectValue(cols.tags, items) });
-                }
-                if (cols.source && options.syncSource) {
-                    cells.push({ keyID: cols.source, itemID: item.itemID, value: textValue(cols.source, item.entry.source) });
+                    cells.push({ keyID: cols.tags, itemID: item.itemID, value: selectValue(cols.tags, tagItems(item.entry)) });
                 }
             }
-            // 本批没有任何要写的单元格（例如只映射了链接列且标题未变）：直接刷新记录即可
+            // 本批没有任何要写的单元格（例如仅映射了链接列且标题未变）：直接刷新记录即可
             if (!cells.length) {
                 const now = Date.now();
                 for (const item of chunk) {
@@ -445,9 +420,9 @@ export class BookmarkSync {
         }
         const deletable: { key: string; itemID: string }[] = [];
         for (const key of staleKeys) {
-            const itemID = dbQual.get(key) || dbBare.get(key) || dbAny.get(key) || "";
+            const itemID = dbAny.get(key) || "";
             if (itemID && touched.has(itemID)) {
-                // 行仍被本次来源命中（只是旧记录键格式变了），作废记录即可
+                // 行仍被本次来源命中（只是旧键格式变化），作废记录即可
                 delete this.records[key];
             } else if (itemID) {
                 deletable.push({ key, itemID });
