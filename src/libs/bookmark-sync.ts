@@ -38,10 +38,12 @@ const RECORDS_FILE = "bookmark-sync-records.json";
 /** 整理列时希望看到的目标列名 / 叫法 */
 export const BOOKMARK_PK_NAME = "网站名";
 export const BOOKMARK_TAGS_NAME = "标签";
-/** 主键列还是这些「默认叫法」时才自动改名成网站名，自定义过的列名不动 */
-const PK_DEFAULT_NAME_RE = /^\s*(标题|名称|关键字|关键词|title|name)\s*$/i;
-/** 标签列名关键词（多选匹配 + 单选孤儿列识别共用） */
-const TAG_NAME_RE = /标签|分类|目录|文件夹|tag|folder|categor/i;
+/** 主键列还是这些「默认叫法」时才自动改名成网站名，自定义过的列名不动（3.2 模板叫「标题」，3.8 模板叫「主键」） */
+const PK_DEFAULT_NAME_RE = /^\s*(标题|名称|主键|关键字|关键词|title|name|primary\s*key)\s*$/i;
+/** 标签列名关键词（多选匹配 + 单选孤儿列识别共用；3.8 模板自带 select 列名叫「单选」） */
+const TAG_NAME_RE = /标签|分类|目录|文件夹|单选|选择|tag|folder|categor|select/i;
+/** 旧版插件遗留的「来源」文本列名 */
+const SOURCE_NAME_RE = /^\s*(来源|source)\s*$/i;
 
 /**
  * 浏览器导出的「默认容器」名称：这些层级对分类没有信息量，不打成标签。
@@ -205,11 +207,33 @@ export async function createMissingColumns(
 }
 
 /**
- * 「整理数据库列」一键动作（幂等，可反复点）：
- *  1. 主键列改名为「网站名」（仅当它还叫「标题/名称」这类默认名时，自定义过的列名不动）
- *  2. 标签列：思源新建的数据库自带一个「标签」**单选**列（这就是多余单选字段的来源）。
+ * 检测数据库列结构是否需要整理（同步前自动触发，也用于对话框展示）：
+ * 缺列 / 主键还是模板默认叫法（3.2「标题」、3.8「主键」）/ 残留单选标签列 / 旧版遗留来源列
+ */
+export function detectTidyNeed(keys: AvKey[], wantTags: boolean): string[] {
+    const reasons: string[] = [];
+    const pk = keys.find((k) => k.type === "block") || null;
+    if (pk && pk.name !== BOOKMARK_PK_NAME && (!pk.name || PK_DEFAULT_NAME_RE.test(pk.name))) {
+        reasons.push(`主键「${pk.name || "（空）"}」待改名为「${BOOKMARK_PK_NAME}」`);
+    }
+    const cols = resolveColumns(keys, wantTags);
+    if (cols.missing.length) reasons.push(`缺${cols.missing.map((m) => m.label).join("/")}列`);
+    if (wantTags && keys.some((k) => k.type === "select" && TAG_NAME_RE.test(k.name || ""))) {
+        reasons.push("存在单选标签列");
+    }
+    if (keys.some((k) => k.type === "text" && SOURCE_NAME_RE.test((k.name || "").trim()))) {
+        reasons.push("存在旧版遗留「来源」列");
+    }
+    return reasons;
+}
+
+/**
+ * 「整理数据库列」一键动作（幂等，可反复点，同步开始前也会自动执行一次）：
+ *  1. 主键列改名为「网站名」（仅当它还叫「标题/主键」这类模板默认名时，自定义过的列名不动）
+ *  2. 标签列：思源新建的数据库自带一个「标签」（3.2）/「单选」（3.8）**单选**列（这就是多余单选字段的来源）。
  *     没有多选标签列时，就把这个单选列原地转成「多选」（两者值都存在 mSelect 数组里，原有值不丢）；
- *     已有多选标签列、还残留叫「标签」的单选孤儿列时，若它没有值就直接删除
+ *     已有多选标签列、还残留叫「标签/单选」的单选孤儿列时，若它没有值就直接删除
+ *  2b. 旧版插件遗留的「来源」文本列：整列没值就删除
  *  3. 补齐缺失列（网站链接 / 描述 / 标签）
  *  4. 当前视图的列顺序调整为：网站名 → 网站链接 → 标签 → 描述 → 其余列
  */
@@ -233,6 +257,8 @@ export async function tidyColumns(avID: string, blockID: string, wantTags: boole
     const straySelects = keys.filter(
         (k) => k.type === "select" && TAG_NAME_RE.test(k.name || "") && k.name !== BOOKMARK_PK_NAME
     );
+    // 旧版插件遗留的「来源」文本列（现已不再写入），整列没值就顺手删掉
+    const sourceStrays = keys.filter((k) => k.type === "text" && SOURCE_NAME_RE.test((k.name || "").trim()));
     if (wantTags) {
         if (!tagsKey && straySelects.length) {
             const conv = straySelects.shift() as AvKey;
@@ -244,29 +270,40 @@ export async function tidyColumns(avID: string, blockID: string, wantTags: boole
             await addAvKey(avID, blockID, { keyID: genAvID(), name: BOOKMARK_TAGS_NAME, type: "mSelect" });
             actions.push(`已新建多选列「${BOOKMARK_TAGS_NAME}」`);
         }
-        for (const s of straySelects) {
-            // 只删空孤儿列，有值的绝不动手，避免误删用户自己的数据
-            let empty = true;
+    }
+    // 只删空孤儿列，有值的绝不动手，避免误删用户自己的数据（行数据读一次共用）
+    let rowCache: AvRow[] | null = null;
+    const columnEmpty = async (keyID: string): Promise<boolean> => {
+        if (rowCache === null) {
             try {
-                const rows = await getAvRows(avID);
-                for (const row of rows || []) {
-                    for (const v of row.values) {
-                        if (v.keyID === s.id && cellText(v)) {
-                            empty = false;
-                            break;
-                        }
-                    }
-                    if (!empty) break;
-                }
+                rowCache = await getAvRows(avID);
             } catch (e) {
-                empty = false;
+                rowCache = null;
+                return false; // 读不到就视为有值，不动手
             }
-            if (empty) {
+        }
+        if (!rowCache) return false;
+        for (const row of rowCache) {
+            for (const v of row.values) {
+                if (v.keyID === keyID && cellText(v)) return false;
+            }
+        }
+        return true;
+    };
+    if (wantTags) {
+        for (const s of straySelects) {
+            if (await columnEmpty(s.id)) {
                 await removeAvKey(avID, s.id);
                 actions.push(`已删除多余的单选列「${s.name}」`);
             } else {
                 actions.push(`单选列「${s.name}」里还有值，未删除（请确认后手工处理）`);
             }
+        }
+    }
+    for (const s of sourceStrays) {
+        if (await columnEmpty(s.id)) {
+            await removeAvKey(avID, s.id);
+            actions.push(`已删除旧版遗留的「${s.name}」列`);
         }
     }
 
@@ -386,10 +423,25 @@ export class BookmarkSync {
         if (!entries.length) throw new Error("没有待同步的书签");
 
         log(`读取数据库列定义（${entries.length} 条书签待比对）...`);
-        const keys = await getAvKeys(options.avID);
+        let keys = await getAvKeys(options.avID);
         if (!keys.length) throw new Error("读取数据库列失败：请确认目标是一个数据库，且当前账号可编辑");
-        const cols = resolveColumns(keys, options.syncTags);
+        let cols = resolveColumns(keys, options.syncTags);
         if (!cols.name) throw new Error("目标数据库缺少主键（标题）列，请检查数据库结构");
+
+        // ---------- 列结构不完整时自动整理一次（3.8 新库自带「主键」+「单选」模板列，不再要求手动点按钮） ----------
+        let forceFullRewrite = false;
+        const tidyReasons = detectTidyNeed(keys, options.syncTags);
+        if (tidyReasons.length) {
+            log(`列结构需要整理（${tidyReasons.join("；")}），自动整理中...`);
+            const tidyActions = await tidyColumns(options.avID, options.blockID, options.syncTags);
+            for (const action of tidyActions) log(`  · ${action}`);
+            forceFullRewrite = tidyActions.some((a) => /已改名|已原地转换|已新建|已删除|已创建缺失/.test(a));
+            if (forceFullRewrite) {
+                keys = await getAvKeys(options.avID);
+                cols = resolveColumns(keys, options.syncTags);
+                log("列结构已变化：本次跳过增量判断，全量重写一遍，把标签 / 描述回填到所有已有行。");
+            }
+        }
         if (!cols.url) throw new Error('目标数据库缺少「网站链接」列：点「整理数据库列」一键补建');
 
         // ---------- 读取数据库现有行（URL -> itemID） ----------
@@ -453,7 +505,7 @@ export class BookmarkSync {
                 touched.add(itemID);
                 const record = this.records[key];
                 const hash = hashBookmark(entry, options.syncTags);
-                if (options.incremental && record && record.hash === hash) {
+                if (!forceFullRewrite && options.incremental && record && record.hash === hash) {
                     summary.skipped++;
                     continue;
                 }
