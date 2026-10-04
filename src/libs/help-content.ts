@@ -338,10 +338,10 @@ export function getBookmarkHelpTopics(): HelpTopic[] {
         },
         {
             id: "bookmark-fields",
-            title: "③ 整理数据库列、标签自动分类与描述抓取",
-            keywords: "字段 映射 列 网站名 网站链接 标签 描述 自动分类 内容分类 整理数据库列 创建缺失列 主键 多选 单选 类型 排序 meta description 抓取 tag-rules 规则",
+            title: "③ 自动整理列、标签内容分类与描述抓取",
+            keywords: "字段 映射 列 网站名 网站链接 标签 描述 自动分类 内容分类 自动整理列 创建缺失列 主键 多选 单选 类型 排序 meta description 抓取 tag-rules 规则",
             html: `
-<p>插件按<b>列名关键词 + 列类型</b>自动匹配目标数据库的字段。<b>每次「开始同步」前插件会自动检测列结构，不完整就先自动整理一次</b>（整理后本轮自动全量回填，已有行的标签 / 描述会补齐）；也可以随时手动点 <b>「整理数据库列」</b>（幂等，可反复点）：</p>
+<p>插件按<b>列名关键词 + 列类型</b>自动匹配目标数据库的字段。<b>「整理数据库列」是每次同步的固定前置步骤，自动执行、无需任何按钮</b>（幂等，列已就位时零写操作；结构确有变化时本轮自动全量回填，已有行的标签 / 描述会补齐）：</p>
 <ul>
 <li>主键列自动改名为<b>「网站名」</b>——只改「标题 / 主键」这类模板默认叫法，你自定义过的列名不会被动；</li>
 <li>列顺序统一为 <b>网站名 → 网站链接 → 标签 → 描述</b>，其余列排在后面；</li>
@@ -355,14 +355,14 @@ export function getBookmarkHelpTopics(): HelpTopic[] {
 <dt>标签（自动分类）</dt><dd>「多选」列，每条书签最多 4 个标签，按 <b>内容分类 → 书签文件夹 → 域名兜底</b> 依次组成：
 插件按<b>域名 + 标题关键词</b>把网站归类到「工具 / 网盘 / 资源 / 工作 / 电子书 / 博客 / 开发 / 有趣 / 论坛 / AI / 音乐」等分类（内置规则表）；你的书签文件夹层级（如 <code>yczx</code>）会作为补充标签一并写入，「书签栏 / 其他书签」等浏览器默认容器会被忽略；两者都没命中时退回<b>域名</b>兜底（如 <code>github.com</code>）。
 分类词、域名、关键词全部可以自定义：规则文件在工作区 <code>/data/bookmarks/tag-rules.json</code>（首次同步自动生成），用任意编辑器改完保存，下次同步即生效——改过规则的行 hash 会变，相关书签会自动重刷标签。</dd>
-<dt>描述</dt><dd>文本列。优先用导出文件自带的说明（<code>&lt;DD&gt;</code>，多数浏览器不写）；为空且勾选了「抓取网页描述」时，插件经内核网络代理访问目标网页，读取页面 <code>&lt;meta name="description"&gt;</code>（og / twitter description 兜底）填入，请求只从你的思源内核发出。很多站点（如 <code>work.aliyun.com/alimail/</code>）是 <b>JS 跳转壳页</b>，HTML 里根本没有 meta 描述——这种情况会用<b>书签标题兜底</b>填写，描述列不会留空。抓取失败 / 超时<b>不会写空覆盖</b>已有内容；抓到过的结果按 URL 缓存，下次同步不重复访问（想全部重抓就「重置同步记录」）。首次同步几千条书签时抓取会比较慢，日志里有进度。</dd>
+<dt>描述</dt><dd>文本列。优先用导出文件自带的说明（<code>&lt;DD&gt;</code>，多数浏览器不写）；为空且勾选了「抓取网页描述」时，插件经内核网络代理访问目标网页，读取页面 <code>&lt;meta name="description"&gt;</code>（og / twitter description 兜底）填入，请求只从你的思源内核发出。很多站点（如 <code>work.aliyun.com/alimail/</code>）是 <b>JS 跳转壳页</b>，HTML 里根本没有 meta 描述——这种情况会用<b>书签标题兜底</b>填写，描述列不会留空。抓取失败 / 超时<b>不会写空覆盖</b>已有内容；抓到过的结果按 URL 缓存，下次同步不重复访问（想让所有网站重抓一遍，关闭思源后删除 <code>data/storage/petal/siyuan-plugin-docker-tools/bookmark-sync-records.json</code> 再重新同步即可）。首次同步几千条书签时抓取会比较慢，日志里有进度。</dd>
 </dl>
 <p>目标数据库直接在对话框下拉框里选择（自动列出全部数据库，新建的点「刷新」）。</p>`,
         },
         {
             id: "bookmark-incremental",
             title: "④ 增量、去重与「清理已消失的书签」",
-            keywords: "增量 去重 删除 消失 清理 重置同步记录 hash 重复行",
+            keywords: "增量 去重 删除 消失 清理 hash 重复行 重抓 缓存",
             html: `
 <dl>
 <dt>增量同步（默认开）</dt>
@@ -374,9 +374,10 @@ export function getBookmarkHelpTopics(): HelpTopic[] {
 <dt>清理已消失的书签（默认关）</dt>
 <dd>浏览器里删掉的书签，数据库里的行<b>默认保留</b>。打开这个开关后，
 「上次同步过、这次来源文件里没有了」的行会被删除——只会删插件自己同步出来的行，手工加的行不动。</dd>
-<dt>重置同步记录</dt>
-<dd>清空插件的 hash 记录，下次同步把所有勾选的书签重新写一遍（按 URL 匹配原行更新，不会产生重复行）。
-换了目标数据库、或同步行对不上号时使用。</dd>
+<dt>想全部重写 / 重抓描述</dt>
+<dd>关掉「增量同步」再同步一次即可全量重写（按 URL 匹配原行更新，不会产生重复行）。
+网页描述的抓取结果缓存在同步记录里，想让所有网站<b>重新抓一遍描述</b>：关闭思源后删除
+<code>data/storage/petal/siyuan-plugin-docker-tools/bookmark-sync-records.json</code>，重启再同步。</dd>
 </dl>`,
         },
         {

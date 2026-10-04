@@ -5,7 +5,7 @@
  *       下次打开对话框自动加载 → 勾选要同步的文件夹 → 下拉选择目标数据库 → 同步。
  */
 
-import { Dialog, confirm, showMessage } from "siyuan";
+import { Dialog, showMessage } from "siyuan";
 import { getWorkspaceFileText, putWorkspaceFile, removeWorkspaceFile } from "../api";
 import {
     BookmarkEntry,
@@ -22,7 +22,6 @@ import {
     DEFAULT_BOOKMARK_OPTIONS,
     SyncBookmark,
     resolveColumns,
-    tidyColumns,
 } from "./bookmark-sync";
 import { AvKey, AvSearchResult, getAvKeys, searchAttributeViews } from "./av-api";
 
@@ -65,7 +64,6 @@ export class BookmarkSyncDialog {
     private dbSelect: HTMLSelectElement;
     private dbStatusEl: HTMLElement;
     private columnsEl: HTMLElement;
-    private ensureBtn: HTMLButtonElement;
 
     private incrementalInput: HTMLInputElement;
     private tagsInput: HTMLInputElement;
@@ -108,7 +106,6 @@ export class BookmarkSyncDialog {
         this.dbSelect = root.querySelector("#bm-db") as HTMLSelectElement;
         this.dbStatusEl = root.querySelector("#bm-db-status") as HTMLElement;
         this.columnsEl = root.querySelector("#bm-columns") as HTMLElement;
-        this.ensureBtn = root.querySelector("#bm-ensure-cols") as HTMLButtonElement;
         this.incrementalInput = root.querySelector("#bm-incremental") as HTMLInputElement;
         this.tagsInput = root.querySelector("#bm-tags") as HTMLInputElement;
         this.removeInput = root.querySelector("#bm-remove") as HTMLInputElement;
@@ -140,7 +137,6 @@ export class BookmarkSyncDialog {
         <div class="bookmark-sync__row">
             <span class="bookmark-sync__label">${this.t("bookmarkColumns", "字段映射")}</span>
             <span id="bm-columns" class="bookmark-sync__hint-inline"></span>
-            <button id="bm-ensure-cols" class="b3-button b3-button--outline fn__none">${this.t("bookmarkEnsureCols", "整理数据库列")}</button>
         </div>
         <div class="bookmark-sync__row bookmark-sync__options">
             <label><input type="checkbox" id="bm-incremental"> ${this.t("bookmarkIncremental", "增量同步")}</label>
@@ -152,7 +148,6 @@ export class BookmarkSyncDialog {
     <div class="bookmark-sync__tree" id="bm-tree"></div>
     <div class="bookmark-sync__log" id="bm-log"></div>
     <div class="bookmark-sync__footer">
-        <button id="bm-reset-btn" class="b3-button b3-button--outline">${this.t("bookmarkResetRecords", "重置同步记录")}</button>
         <button id="bm-help-btn" class="b3-button b3-button--outline">${this.t("helpMenu", "使用帮助")}</button>
         <span class="fn__space"></span>
         <button id="bm-sync-btn" class="b3-button b3-button--text">${this.t("bookmarkStartSync", "开始同步")}</button>
@@ -206,25 +201,9 @@ export class BookmarkSyncDialog {
             const picked = this.dbResults[Number(this.dbSelect.value)];
             if (picked) void this.pickDatabase(picked);
         };
-        this.ensureBtn.onclick = () => {
-            void this.ensureColumns();
-        };
 
         this.syncBtn.onclick = () => {
             void this.handleSync();
-        };
-        (this.dialog.element.querySelector("#bm-reset-btn") as HTMLElement).onclick = () => {
-            confirm(
-                this.t("bookmarkResetRecords", "重置同步记录"),
-                this.t("bookmarkResetConfirm", "重置后，下次同步会把所有勾选的书签按内容重新写入数据库（不会产生重复行）。确定继续？"),
-                () => {
-                    void (async () => {
-                        await this.deps.sync.clearRecords();
-                        this.appendLog(this.t("bookmarkRecordsReset", "已重置同步记录。"));
-                        showMessage(this.t("bookmarkRecordsReset", "已重置同步记录"), 3000);
-                    })();
-                }
-            );
         };
         (this.dialog.element.querySelector("#bm-help-btn") as HTMLElement).onclick = () => {
             this.deps.openHelp();
@@ -702,35 +681,14 @@ export class BookmarkSyncDialog {
             if (labels.length) parts.push(`${this.t("bookmarkColMissing", "缺失")}：${labels.join("、")}`);
 
             this.columnsEl.textContent = parts.length ? parts.join("；") : this.t("bookmarkColumnsEmpty", "（读取不到列，请确认目标数据库可编辑）");
-            // 「整理数据库列」幂等：选了库就常显（改名/转多选/补列/排序一键到位）
-            this.ensureBtn.classList.remove("fn__none");
-            if (!cols.url) {
-                this.appendLog(this.t("bookmarkUrlColMissing", "目标数据库缺少「网站链接」列：点「整理数据库列」一键补建后再同步。"));
+            if (labels.length) {
+                // 缺失列不再需要手动补：同步开头的自动整理会一并建好
+                this.appendLog(this.t("bookmarkColsAutoTidy", "检测到缺失列，「开始同步」时会自动补建，无需手动处理。"));
             }
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             this.columnsEl.textContent = "";
             this.appendLog(`读取数据库列失败：${msg}`);
-        }
-    }
-
-    private async ensureColumns() {
-        if (!this.options.avID) return;
-        try {
-            this.ensureBtn.disabled = true;
-            const actions = await tidyColumns(this.options.avID, this.options.blockID, this.options.syncTags);
-            if (actions.length) {
-                for (const action of actions) this.appendLog(action);
-            }
-            this.keys = [];
-            this.columnsDirty = true;
-            await this.refreshColumns();
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            this.appendLog(`整理数据库列失败：${msg}`);
-            showMessage(`整理数据库列失败：${msg}`, 5000, "error");
-        } finally {
-            this.ensureBtn.disabled = false;
         }
     }
 

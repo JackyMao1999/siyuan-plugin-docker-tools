@@ -115,6 +115,39 @@ export function renderAttributeView(avID: string, blockID: string, page: number,
 }
 
 /**
+ * 读当前视图的列顺序（keyID 列表）。先走 renderAttributeView（按 blockID 定位当前视图），
+ * 失败再退回原始 getAttributeView 的第一个表格视图；都拿不到返回 null（调用方保守处理）。
+ */
+export async function getAvViewColumnOrder(avID: string, blockID: string): Promise<string[] | null> {
+    const extract = (root: any): string[] | null => {
+        const views = root?.av?.views ?? root?.views;
+        if (!Array.isArray(views)) return null;
+        for (const v of views) {
+            const columns = v?.table?.columns;
+            if (!Array.isArray(columns)) continue;
+            const ids = columns
+                .map((c: any) => c?.ID ?? c?.id)
+                .filter((x: any): x is string => typeof x === "string" && !!x);
+            if (ids.length) return ids;
+        }
+        return null;
+    };
+    try {
+        const rendered = await renderAttributeView(avID, blockID, 1, 1);
+        const ids = extract(rendered);
+        if (ids) return ids;
+    } catch (e) {
+        // 走原始结构兜底
+    }
+    try {
+        const data = await avRequest<any>("/api/av/getAttributeView", { id: avID });
+        return extract(data);
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
  * 读取数据库原始数据（全部 keyValues，不受视图筛选 / 分组 / 分页影响）。
  * 返回按行（itemID=blockID）聚合后的值列表；
  * 接口结构不符合预期时返回 null（由调用方回退 renderAttributeView 分页）。

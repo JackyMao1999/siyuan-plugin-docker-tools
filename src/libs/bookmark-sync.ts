@@ -22,6 +22,7 @@ import {
     genAvID,
     getAvKeys,
     getAvRows,
+    getAvViewColumnOrder,
     removeAvBlocks,
     removeAvKey,
     renderAttributeView,
@@ -161,7 +162,7 @@ function optionColor(text: string): string {
  * 自动匹配目标数据库的列：
  * 主键 = block 列；网站链接 = url 列（或名字像链接的文本列）；
  * 描述按列名匹配文本列；标签只匹配「多选」列（单选列不参与，避免写多值失败）。
- * 匹配不到进 missing，由「整理数据库列」一键补建。
+ * 匹配不到进 missing，由同步前的自动整理列一并补建。
  */
 export function resolveColumns(keys: AvKey[], wantTags: boolean): ResolvedColumns {
     const types: Record<string, string> = {};
@@ -210,28 +211,7 @@ export async function createMissingColumns(
 }
 
 /**
- * 检测数据库列结构是否需要整理（同步前自动触发，也用于对话框展示）：
- * 缺列 / 主键还是模板默认叫法（3.2「标题」、3.8「主键」）/ 残留单选标签列 / 旧版遗留来源列
- */
-export function detectTidyNeed(keys: AvKey[], wantTags: boolean): string[] {
-    const reasons: string[] = [];
-    const pk = keys.find((k) => k.type === "block") || null;
-    if (pk && pk.name !== BOOKMARK_PK_NAME && (!pk.name || PK_DEFAULT_NAME_RE.test(pk.name))) {
-        reasons.push(`主键「${pk.name || "（空）"}」待改名为「${BOOKMARK_PK_NAME}」`);
-    }
-    const cols = resolveColumns(keys, wantTags);
-    if (cols.missing.length) reasons.push(`缺${cols.missing.map((m) => m.label).join("/")}列`);
-    if (wantTags && keys.some((k) => k.type === "select" && TAG_NAME_RE.test(k.name || ""))) {
-        reasons.push("存在单选标签列");
-    }
-    if (keys.some((k) => k.type === "text" && SOURCE_NAME_RE.test((k.name || "").trim()))) {
-        reasons.push("存在旧版遗留「来源」列");
-    }
-    return reasons;
-}
-
-/**
- * 「整理数据库列」一键动作（幂等，可反复点，同步开始前也会自动执行一次）：
+ * 「整理数据库列」核心动作（幂等，每次同步开始前都会自动执行，无手动按钮）：
  *  1. 主键列改名为「网站名」（仅当它还叫「标题/主键」这类模板默认名时，自定义过的列名不动）
  *  2. 标签列：思源新建的数据库自带一个「标签」（3.2）/「单选」（3.8）**单选**列（这就是多余单选字段的来源）。
  *     没有多选标签列时，就把这个单选列原地转成「多选」（两者值都存在 mSelect 数组里，原有值不丢）；
@@ -245,6 +225,17 @@ export async function tidyColumns(avID: string, blockID: string, wantTags: boole
     if (!avID) throw new Error("请先选择目标数据库");
     let keys = await getAvKeys(avID);
     if (!keys.length) throw new Error("读取数据库列失败：请确认目标是一个数据库");
+
+    // 快速路径：每次同步都会调用本函数，结构已就位时只核对列顺序，稳态零内核写请求
+    const headCols = resolveColumns(keys, wantTags);
+    const headPk = keys.find((k) => k.type === "block") || null;
+    const pkNeedsRename = !!headPk && headPk.name !== BOOKMARK_PK_NAME && (!headPk.name || PK_DEFAULT_NAME_RE.test(headPk.name));
+    const hasStraySelect = keys.some((k) => k.type === "select" && TAG_NAME_RE.test(k.name || "") && k.name !== BOOKMARK_PK_NAME);
+    const hasStraySource = keys.some((k) => k.type === "text" && SOURCE_NAME_RE.test((k.name || "").trim()));
+    if (!pkNeedsRename && !headCols.missing.length && !hasStraySelect && !hasStraySource) {
+        await ensureColumnOrder(actions, avID, blockID, keys, headCols);
+        return actions;
+    }
 
     // 1) 主键改名
     const pk = keys.find((k) => k.type === "block") || null;
@@ -321,15 +312,42 @@ export async function tidyColumns(avID: string, blockID: string, wantTags: boole
     // 4) 列顺序：网站名 → 网站链接 → 标签 → 描述 → 其余列
     const finalKeys = await getAvKeys(avID);
     const finalCols = resolveColumns(finalKeys, wantTags);
+    await ensureColumnOrder(actions, avID, blockID, finalKeys, finalCols);
+    return actions;
+}
+
+/**
+ * 把当前视图列顺序调整为目标顺序；前几列已经就位就跳过（同步每轮都会走到这里，
+ * 稳态下不向内核白发排序请求）。
+ */
+async function ensureColumnOrder(
+    actions: string[],
+    avID: string,
+    blockID: string,
+    keys: AvKey[],
+    cols: ResolvedColumns
+): Promise<void> {
     const order: string[] = [];
     const pushCol = (id?: string) => {
         if (id && !order.includes(id)) order.push(id);
     };
-    pushCol(finalCols.name);
-    pushCol(finalCols.url);
-    pushCol(finalCols.tags);
-    pushCol(finalCols.desc);
-    for (const k of finalKeys) pushCol(k.id);
+    pushCol(cols.name);
+    pushCol(cols.url);
+    pushCol(cols.tags);
+    pushCol(cols.desc);
+    for (const k of keys) pushCol(k.id);
+    const head = order.slice(0, 4);
+    const current = await getAvViewColumnOrder(avID, blockID);
+    if (current && current.length >= head.length) {
+        let ok = true;
+        for (let i = 0; i < head.length; i++) {
+            if (current[i] !== head[i]) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return; // 前几列已就位，尾部列顺序不强行干涉
+    }
     let reorderErr = "";
     for (let i = 0; i < order.length; i++) {
         try {
@@ -344,7 +362,6 @@ export async function tidyColumns(avID: string, blockID: string, wantTags: boole
     } else {
         actions.push(`列顺序已调整为「${BOOKMARK_PK_NAME} → 网站链接 → ${BOOKMARK_TAGS_NAME} → 描述」`);
     }
-    return actions;
 }
 
 /** 按列类型构造一个单元格的值 */
@@ -411,11 +428,6 @@ export class BookmarkSync {
         return this.records;
     }
 
-    async clearRecords(): Promise<void> {
-        this.records = {};
-        await this.saveRecords();
-    }
-
     /**
      * 执行同步：entries = 勾选后的全部书签。
      * log / onProgress 由对话框注入，用于进度展示。
@@ -436,21 +448,17 @@ export class BookmarkSync {
         let cols = resolveColumns(keys, options.syncTags);
         if (!cols.name) throw new Error("目标数据库缺少主键（标题）列，请检查数据库结构");
 
-        // ---------- 列结构不完整时自动整理一次（3.8 新库自带「主键」+「单选」模板列，不再要求手动点按钮） ----------
+        // ---------- 整理数据库列是同步的固定前置步骤（无按钮、每次必执行；内部幂等，稳态只读） ----------
         let forceFullRewrite = false;
-        const tidyReasons = detectTidyNeed(keys, options.syncTags);
-        if (tidyReasons.length) {
-            log(`列结构需要整理（${tidyReasons.join("；")}），自动整理中...`);
-            const tidyActions = await tidyColumns(options.avID, options.blockID, options.syncTags);
-            for (const action of tidyActions) log(`  · ${action}`);
-            forceFullRewrite = tidyActions.some((a) => /已改名|已原地转换|已新建|已删除|已创建缺失/.test(a));
-            if (forceFullRewrite) {
-                keys = await getAvKeys(options.avID);
-                cols = resolveColumns(keys, options.syncTags);
-                log("列结构已变化：本次跳过增量判断，全量重写一遍，把标签 / 描述回填到所有已有行。");
-            }
+        const tidyActions = await tidyColumns(options.avID, options.blockID, options.syncTags);
+        for (const action of tidyActions) log(`  · ${action}`);
+        forceFullRewrite = tidyActions.some((a) => /已改名|已原地转换|已新建|已删除|已创建缺失/.test(a));
+        if (forceFullRewrite) {
+            keys = await getAvKeys(options.avID);
+            cols = resolveColumns(keys, options.syncTags);
+            log("列结构已变化：本次跳过增量判断，全量重写一遍，把标签 / 描述回填到所有已有行。");
         }
-        if (!cols.url) throw new Error('目标数据库缺少「网站链接」列：点「整理数据库列」一键补建');
+        if (!cols.url) throw new Error("目标数据库缺少「网站链接」列且自动补建失败：请确认当前账号可编辑该数据库");
 
         // ---------- 读取数据库现有行（URL -> itemID） ----------
         const dbAny = new Map<string, string>();
