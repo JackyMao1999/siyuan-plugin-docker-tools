@@ -20,10 +20,9 @@ import {
     BookmarkSync,
     BookmarkSyncOptions,
     DEFAULT_BOOKMARK_OPTIONS,
-    ResolvedColumns,
     SyncBookmark,
-    createMissingColumns,
     resolveColumns,
+    tidyColumns,
 } from "./bookmark-sync";
 import { AvKey, AvSearchResult, getAvKeys, searchAttributeViews } from "./av-api";
 
@@ -71,6 +70,7 @@ export class BookmarkSyncDialog {
     private incrementalInput: HTMLInputElement;
     private tagsInput: HTMLInputElement;
     private removeInput: HTMLInputElement;
+    private fetchDescInput: HTMLInputElement;
 
     /** 已解析的书签文件（= 来源） */
     private files: BookmarkFile[] = [];
@@ -78,9 +78,8 @@ export class BookmarkSyncDialog {
     private rawTexts = new Map<string, string>();
     /** 搜索到的数据库候选 */
     private dbResults: AvSearchResult[] = [];
-    /** 目标数据库的列定义与匹配结果 */
+    /** 目标数据库的列定义 */
     private keys: AvKey[] = [];
-    private columns: ResolvedColumns | null = null;
     private columnsDirty = true;
 
     constructor(deps: BookmarkDialogDeps) {
@@ -113,6 +112,7 @@ export class BookmarkSyncDialog {
         this.incrementalInput = root.querySelector("#bm-incremental") as HTMLInputElement;
         this.tagsInput = root.querySelector("#bm-tags") as HTMLInputElement;
         this.removeInput = root.querySelector("#bm-remove") as HTMLInputElement;
+        this.fetchDescInput = root.querySelector("#bm-fetch-desc") as HTMLInputElement;
 
         this.bindEvents();
         this.init();
@@ -140,11 +140,12 @@ export class BookmarkSyncDialog {
         <div class="bookmark-sync__row">
             <span class="bookmark-sync__label">${this.t("bookmarkColumns", "字段映射")}</span>
             <span id="bm-columns" class="bookmark-sync__hint-inline"></span>
-            <button id="bm-ensure-cols" class="b3-button b3-button--outline fn__none">${this.t("bookmarkEnsureCols", "创建缺失列")}</button>
+            <button id="bm-ensure-cols" class="b3-button b3-button--outline fn__none">${this.t("bookmarkEnsureCols", "整理数据库列")}</button>
         </div>
         <div class="bookmark-sync__row bookmark-sync__options">
             <label><input type="checkbox" id="bm-incremental"> ${this.t("bookmarkIncremental", "增量同步")}</label>
             <label><input type="checkbox" id="bm-tags"> ${this.t("bookmarkTags", "写入标签（按书签文件夹自动分类）")}</label>
+            <label><input type="checkbox" id="bm-fetch-desc"> ${this.t("bookmarkFetchDesc", "抓取网页描述填入「描述」列")}</label>
             <label><input type="checkbox" id="bm-remove"> ${this.t("bookmarkRemoveMissing", "清理已消失的书签")}</label>
         </div>
     </div>
@@ -163,6 +164,7 @@ export class BookmarkSyncDialog {
         this.incrementalInput.checked = this.options.incremental;
         this.tagsInput.checked = this.options.syncTags;
         this.removeInput.checked = this.options.removeMissing;
+        this.fetchDescInput.checked = this.options.fetchDescription;
 
         if (this.options.avID) {
             this.setDbStatus(this.options.dbName || this.t("bookmarkDbSelected", "当前数据库"));
@@ -228,7 +230,7 @@ export class BookmarkSyncDialog {
             this.deps.openHelp();
         };
 
-        for (const input of [this.incrementalInput, this.removeInput]) {
+        for (const input of [this.incrementalInput, this.removeInput, this.fetchDescInput]) {
             input.onchange = () => this.collectOptions();
         }
         // 「标签」开关会改变字段匹配结果（缺失列是否计入），需要刷新映射展示
@@ -242,6 +244,7 @@ export class BookmarkSyncDialog {
         this.options.incremental = this.incrementalInput.checked;
         this.options.syncTags = this.tagsInput.checked;
         this.options.removeMissing = this.removeInput.checked;
+        this.options.fetchDescription = this.fetchDescInput.checked;
     }
 
     // ------------------------------ 来源文件 ------------------------------
@@ -689,7 +692,6 @@ export class BookmarkSyncDialog {
                 this.columnsDirty = false;
             }
             const cols = resolveColumns(this.keys, this.options.syncTags);
-            this.columns = cols;
 
             const parts: string[] = [];
             if (cols.name) parts.push(`${this.t("bookmarkColName", "网站名")}→${this.colName(cols.name)}`);
@@ -700,9 +702,10 @@ export class BookmarkSyncDialog {
             if (labels.length) parts.push(`${this.t("bookmarkColMissing", "缺失")}：${labels.join("、")}`);
 
             this.columnsEl.textContent = parts.length ? parts.join("；") : this.t("bookmarkColumnsEmpty", "（读取不到列，请确认目标数据库可编辑）");
-            this.ensureBtn.classList.toggle("fn__none", !labels.length);
+            // 「整理数据库列」幂等：选了库就常显（改名/转多选/补列/排序一键到位）
+            this.ensureBtn.classList.remove("fn__none");
             if (!cols.url) {
-                this.appendLog(this.t("bookmarkUrlColMissing", "目标数据库缺少「网站链接」列：点「创建缺失列」一键补建后再同步。"));
+                this.appendLog(this.t("bookmarkUrlColMissing", "目标数据库缺少「网站链接」列：点「整理数据库列」一键补建后再同步。"));
             }
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -712,18 +715,20 @@ export class BookmarkSyncDialog {
     }
 
     private async ensureColumns() {
-        if (!this.options.avID || !this.columns) return;
+        if (!this.options.avID) return;
         try {
             this.ensureBtn.disabled = true;
-            const created = await createMissingColumns(this.options.avID, this.options.blockID, this.columns.missing);
-            if (created.length) this.appendLog(`已创建列：${created.join("、")}`);
+            const actions = await tidyColumns(this.options.avID, this.options.blockID, this.options.syncTags);
+            if (actions.length) {
+                for (const action of actions) this.appendLog(action);
+            }
             this.keys = [];
             this.columnsDirty = true;
             await this.refreshColumns();
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            this.appendLog(`创建列失败：${msg}`);
-            showMessage(`创建列失败：${msg}`, 5000, "error");
+            this.appendLog(`整理数据库列失败：${msg}`);
+            showMessage(`整理数据库列失败：${msg}`, 5000, "error");
         } finally {
             this.ensureBtn.disabled = false;
         }

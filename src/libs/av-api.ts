@@ -203,12 +203,15 @@ export async function appendDetachedRows(avID: string, rows: AvValue[][]): Promi
     await avRequest("/api/av/appendAttributeViewDetachedBlocksWithValues", { avID, blocksValues: rows });
 }
 
-/** 批量更新单元格：每项 {keyID, itemID, value} */
+/** 批量更新单元格：每项 {keyID, itemID, value}（内核要求的字段名是 rowID） */
 export async function batchSetCells(
     avID: string,
     updates: { keyID: string; itemID: string; value: AvValue }[]
 ): Promise<void> {
-    await avRequest("/api/av/batchSetAttributeViewBlockAttrs", { avID, values: updates });
+    await avRequest("/api/av/batchSetAttributeViewBlockAttrs", {
+        avID,
+        values: updates.map((u) => ({ keyID: u.keyID, rowID: u.itemID, value: u.value })),
+    });
 }
 
 /** 删除行：srcIDs 传 itemID（或绑定的块 ID） */
@@ -216,11 +219,11 @@ export async function removeAvBlocks(avID: string, srcIDs: string[]): Promise<vo
     await avRequest("/api/av/removeAttributeViewBlocks", { avID, srcIDs });
 }
 
-/** 新增一列 */
+/** 新增一列（previousKeyID 传 "" 时表格视图会插到最前，重排交给整理列流程统一处理） */
 export async function addAvKey(
     avID: string,
     blockID: string,
-    opts: { keyID: string; name: string; type: string; icon?: string }
+    opts: { keyID: string; name: string; type: string; icon?: string; previousKeyID?: string }
 ): Promise<void> {
     const payload: any = {
         avID,
@@ -228,8 +231,45 @@ export async function addAvKey(
         keyName: opts.name,
         keyType: opts.type,
         keyIcon: opts.icon || "",
-        previousKeyID: "",
+        previousKeyID: opts.previousKeyID || "",
     };
     if (blockID) payload.blockID = blockID;
     await avRequest("/api/av/addAttributeViewKey", payload);
+}
+
+/** 删除一列（连同该列所有单元格的值一并删除） */
+export async function removeAvKey(avID: string, keyID: string): Promise<void> {
+    await avRequest("/api/av/removeAttributeViewKey", { avID, keyID });
+}
+
+/**
+ * 修改列名 / 列类型（改列名没有独立的 av 路由，走 /api/transactions 的 updateAttrViewCol）。
+ * 单选列与多选列的值都存放在 mSelect 数组里，select ↔ mSelect 互换时原有值会被保留。
+ */
+export async function updateAvCol(avID: string, keyID: string, name: string, type: string): Promise<void> {
+    await avRequest("/api/transactions", {
+        reqId: Date.now(),
+        original: "",
+        app: "siyuan-desktop",
+        session: "bookmark-sync",
+        transactions: [
+            {
+                doOperations: [
+                    { action: "updateAttrViewCol", data: null, id: keyID, keyID, avID, name, type },
+                ],
+                undoOperations: null,
+            },
+        ],
+    });
+}
+
+/**
+ * 调整视图列顺序：把 keyID 移动到 previousKeyID 之后；previousKeyID 传 "" = 放到第一列。
+ * 注意：内核把这里的 viewID 参数当作「数据库块 ID」去解析所在视图（kernel/api/av.go），
+ * 传块 ID 可精确定位当前浏览的视图；传空则退化为数据库记录的当前视图。
+ */
+export async function sortViewKey(avID: string, blockID: string, keyID: string, previousKeyID: string): Promise<void> {
+    const payload: any = { avID, keyID, previousKeyID };
+    if (blockID) payload.viewID = blockID;
+    await avRequest("/api/av/sortAttributeViewViewKey", payload);
 }

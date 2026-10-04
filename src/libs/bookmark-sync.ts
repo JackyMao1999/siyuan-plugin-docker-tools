@@ -3,7 +3,8 @@
  *
  * 行身份 = 规范化 URL，直接以数据库实际内容为事实源：每次同步先读取全部现有行
  * （优先原始 keyValues，不受视图筛选影响），再决定「新增 / 更新 / 跳过 / 清理」。
- * 同步记录（bookmark-sync-records.json）只保存内容 hash，用于增量跳过。
+ * 同步记录（bookmark-sync-records.json）保存内容 hash（增量跳过用）与已抓取的
+ * 网页描述 webDesc（避免重复访问同一网站）。
  */
 
 import { Plugin } from "siyuan";
@@ -22,13 +23,36 @@ import {
     getAvKeys,
     getAvRows,
     removeAvBlocks,
+    removeAvKey,
     renderAttributeView,
     selectValue,
+    sortViewKey,
     textValue,
+    updateAvCol,
     urlValue,
 } from "./av-api";
+import { fetchPageDescription, mapWithConcurrency } from "./web-desc";
 
 const RECORDS_FILE = "bookmark-sync-records.json";
+
+/** 整理列时希望看到的目标列名 / 叫法 */
+export const BOOKMARK_PK_NAME = "网站名";
+export const BOOKMARK_TAGS_NAME = "标签";
+/** 主键列还是这些「默认叫法」时才自动改名成网站名，自定义过的列名不动 */
+const PK_DEFAULT_NAME_RE = /^\s*(标题|名称|关键字|关键词|title|name)\s*$/i;
+/** 标签列名关键词（多选匹配 + 单选孤儿列识别共用） */
+const TAG_NAME_RE = /标签|分类|目录|文件夹|tag|folder|categor/i;
+
+/**
+ * 浏览器导出的「默认容器」名称：这些层级对分类没有信息量，不打成标签。
+ * 书签全散落在默认容器里时，退化为按主域名打标签（如 github.com）。
+ */
+const TRIVIAL_FOLDER_NAMES = new Set([
+    "书签栏", "其他书签", "书签菜单", "书签提示栏", "移动端书签", "个人收藏", "收藏夹", "常用书签",
+    "未分类", "未命名文件夹", "书签",
+    "bookmarks bar", "bookmarks toolbar", "bookmarks menu", "other bookmarks", "mobile bookmarks",
+    "favorites", "favorites bar", "other favorites", "mobile favorites", "bookmarks", "unfiled",
+]);
 
 /** 一条待同步书签 = 解析出的条目 + 所属来源名（仅用于展示与日志，不再入库） */
 export interface SyncBookmark extends BookmarkEntry {
@@ -58,6 +82,8 @@ export interface BookmarkSyncOptions {
     removeMissing: boolean;
     /** 把书签所在文件夹路径写入「标签」列（自动分类） */
     syncTags: boolean;
+    /** 描述为空时抓取目标网页的 <meta description> 填入（经内核网络代理） */
+    fetchDescription: boolean;
 }
 
 export const DEFAULT_BOOKMARK_OPTIONS: BookmarkSyncOptions = {
@@ -68,6 +94,7 @@ export const DEFAULT_BOOKMARK_OPTIONS: BookmarkSyncOptions = {
     incremental: true,
     removeMissing: false,
     syncTags: true,
+    fetchDescription: true,
 };
 
 export interface BookmarkSyncRecord {
@@ -75,6 +102,8 @@ export interface BookmarkSyncRecord {
     title: string;
     hash: string;
     syncedAt: number;
+    /** 上次抓到的网页描述（""=抓过但没抓到），避免每次同步重复访问 */
+    webDesc?: string;
 }
 
 export interface BookmarkSyncSummary {
@@ -127,7 +156,7 @@ function optionColor(text: string): string {
  * 自动匹配目标数据库的列：
  * 主键 = block 列；网站链接 = url 列（或名字像链接的文本列）；
  * 描述按列名匹配文本列；标签只匹配「多选」列（单选列不参与，避免写多值失败）。
- * 匹配不到进 missing，由对话框一键创建。
+ * 匹配不到进 missing，由「整理数据库列」一键补建。
  */
 export function resolveColumns(keys: AvKey[], wantTags: boolean): ResolvedColumns {
     const types: Record<string, string> = {};
@@ -142,7 +171,7 @@ export function resolveColumns(keys: AvKey[], wantTags: boolean): ResolvedColumn
 
     const descKey = keys.find((k) => k.type === "text" && /描述|说明|备注|desc|note/i.test(k.name || "")) || null;
     const tagsKey =
-        keys.find((k) => k.type === "mSelect" && /标签|分类|目录|文件夹|tag|folder|categor/i.test(k.name || "")) ||
+        keys.find((k) => k.type === "mSelect" && TAG_NAME_RE.test(k.name || "")) ||
         keys.find((k) => k.type === "mSelect") ||
         null;
 
@@ -175,6 +204,109 @@ export async function createMissingColumns(
     return created;
 }
 
+/**
+ * 「整理数据库列」一键动作（幂等，可反复点）：
+ *  1. 主键列改名为「网站名」（仅当它还叫「标题/名称」这类默认名时，自定义过的列名不动）
+ *  2. 标签列：思源新建的数据库自带一个「标签」**单选**列（这就是多余单选字段的来源）。
+ *     没有多选标签列时，就把这个单选列原地转成「多选」（两者值都存在 mSelect 数组里，原有值不丢）；
+ *     已有多选标签列、还残留叫「标签」的单选孤儿列时，若它没有值就直接删除
+ *  3. 补齐缺失列（网站链接 / 描述 / 标签）
+ *  4. 当前视图的列顺序调整为：网站名 → 网站链接 → 标签 → 描述 → 其余列
+ */
+export async function tidyColumns(avID: string, blockID: string, wantTags: boolean): Promise<string[]> {
+    const actions: string[] = [];
+    if (!avID) throw new Error("请先选择目标数据库");
+    let keys = await getAvKeys(avID);
+    if (!keys.length) throw new Error("读取数据库列失败：请确认目标是一个数据库");
+
+    // 1) 主键改名
+    const pk = keys.find((k) => k.type === "block") || null;
+    if (!pk) throw new Error("目标数据库没有主键（标题）列，无法自动整理");
+    if (pk.name !== BOOKMARK_PK_NAME && (!pk.name || PK_DEFAULT_NAME_RE.test(pk.name))) {
+        await updateAvCol(avID, pk.id, BOOKMARK_PK_NAME, "block");
+        actions.push(`主键列「${pk.name || "（空）"}」已改名为「${BOOKMARK_PK_NAME}」`);
+    }
+
+    // 2) 标签列：单选转多选 / 删除孤儿单选列 / 缺失补建（关掉「写入标签」时一律不动）
+    keys = await getAvKeys(avID);
+    let tagsKey: AvKey | null = keys.find((k) => k.type === "mSelect" && TAG_NAME_RE.test(k.name || "")) || null;
+    const straySelects = keys.filter(
+        (k) => k.type === "select" && TAG_NAME_RE.test(k.name || "") && k.name !== BOOKMARK_PK_NAME
+    );
+    if (wantTags) {
+        if (!tagsKey && straySelects.length) {
+            const conv = straySelects.shift() as AvKey;
+            await updateAvCol(avID, conv.id, BOOKMARK_TAGS_NAME, "mSelect");
+            tagsKey = { id: conv.id, name: BOOKMARK_TAGS_NAME, type: "mSelect" };
+            actions.push(`单选列「${conv.name}」已原地转换为多选标签列（原有值保留）`);
+        }
+        if (!tagsKey && !keys.some((k) => k.type === "mSelect")) {
+            await addAvKey(avID, blockID, { keyID: genAvID(), name: BOOKMARK_TAGS_NAME, type: "mSelect" });
+            actions.push(`已新建多选列「${BOOKMARK_TAGS_NAME}」`);
+        }
+        for (const s of straySelects) {
+            // 只删空孤儿列，有值的绝不动手，避免误删用户自己的数据
+            let empty = true;
+            try {
+                const rows = await getAvRows(avID);
+                for (const row of rows || []) {
+                    for (const v of row.values) {
+                        if (v.keyID === s.id && cellText(v)) {
+                            empty = false;
+                            break;
+                        }
+                    }
+                    if (!empty) break;
+                }
+            } catch (e) {
+                empty = false;
+            }
+            if (empty) {
+                await removeAvKey(avID, s.id);
+                actions.push(`已删除多余的单选列「${s.name}」`);
+            } else {
+                actions.push(`单选列「${s.name}」里还有值，未删除（请确认后手工处理）`);
+            }
+        }
+    }
+
+    // 3) 补齐缺失列
+    keys = await getAvKeys(avID);
+    const cols = resolveColumns(keys, wantTags);
+    if (cols.missing.length) {
+        const created = await createMissingColumns(avID, blockID, cols.missing);
+        actions.push(`已创建缺失列：${created.join("、")}`);
+    }
+
+    // 4) 列顺序：网站名 → 网站链接 → 标签 → 描述 → 其余列
+    const finalKeys = await getAvKeys(avID);
+    const finalCols = resolveColumns(finalKeys, wantTags);
+    const order: string[] = [];
+    const pushCol = (id?: string) => {
+        if (id && !order.includes(id)) order.push(id);
+    };
+    pushCol(finalCols.name);
+    pushCol(finalCols.url);
+    pushCol(finalCols.tags);
+    pushCol(finalCols.desc);
+    for (const k of finalKeys) pushCol(k.id);
+    let reorderErr = "";
+    for (let i = 0; i < order.length; i++) {
+        try {
+            await sortViewKey(avID, blockID, order[i], i === 0 ? "" : order[i - 1]);
+        } catch (e) {
+            reorderErr = e instanceof Error ? e.message : String(e);
+            break;
+        }
+    }
+    if (reorderErr) {
+        actions.push(`列顺序调整失败：${reorderErr}（可在数据库里拖列头手工排序）`);
+    } else {
+        actions.push(`列顺序已调整为「${BOOKMARK_PK_NAME} → 网站链接 → ${BOOKMARK_TAGS_NAME} → 描述」`);
+    }
+    return actions;
+}
+
 /** 按列类型构造一个单元格的值 */
 function makeValue(keyID: string, columnType: string, content: string): AvValue {
     if (columnType === "url") return urlValue(keyID, content);
@@ -182,14 +314,28 @@ function makeValue(keyID: string, columnType: string, content: string): AvValue 
     return textValue(keyID, content);
 }
 
-/** 标签值：文件夹路径的每一层 = 一个多选项 */
+/**
+ * 标签值 = 书签文件夹层级（跳过「书签栏」等浏览器默认容器）；
+ * 书签没有放进自建文件夹时，用主域名兜底，保证「自动分类」总是有得选。
+ * 想得到「工具 / 网盘 / 开发 / AI / 音乐…」这类分类，在浏览器里建同名文件夹即可，
+ * 文件夹改名 / 移动后重新导出同步，标签会跟着更新。
+ */
 function tagItems(entry: BookmarkEntry): { content: string; color?: string }[] {
     const items: { content: string; color?: string }[] = [];
     const added = new Set<string>();
     for (const seg of entry.folderPath) {
-        if (!seg || added.has(seg)) continue;
-        added.add(seg);
-        items.push({ content: seg, color: optionColor(seg) });
+        const name = (seg || "").trim();
+        if (!name || TRIVIAL_FOLDER_NAMES.has(name.toLowerCase()) || added.has(name)) continue;
+        added.add(name);
+        items.push({ content: name, color: optionColor(name) });
+    }
+    if (!items.length) {
+        try {
+            const host = new URL(entry.url).hostname.replace(/^www\./i, "");
+            if (host) items.push({ content: host, color: optionColor(host) });
+        } catch (e) {
+            /* URL 异常时不打标签 */
+        }
     }
     return items;
 }
@@ -244,7 +390,7 @@ export class BookmarkSync {
         if (!keys.length) throw new Error("读取数据库列失败：请确认目标是一个数据库，且当前账号可编辑");
         const cols = resolveColumns(keys, options.syncTags);
         if (!cols.name) throw new Error("目标数据库缺少主键（标题）列，请检查数据库结构");
-        if (!cols.url) throw new Error('目标数据库缺少「网站链接」列：点「创建缺失列」一键补建');
+        if (!cols.url) throw new Error('目标数据库缺少「网站链接」列：点「整理数据库列」一键补建');
 
         // ---------- 读取数据库现有行（URL -> itemID） ----------
         const dbAny = new Map<string, string>();
@@ -317,17 +463,60 @@ export class BookmarkSync {
             }
         }
 
+        // ---------- 网页描述抓取：只处理「即将写入且来源没带描述」的条目 ----------
+        /** key -> 本次可用的网页描述（含上次已抓到的复用） */
+        const webDesc = new Map<string, string>();
+        if (options.fetchDescription && cols.desc) {
+            const queued = new Set<string>();
+            const queue: { key: string; url: string }[] = [];
+            for (const item of [...toCreate, ...toUpdate]) {
+                if (item.entry.description || queued.has(item.key)) continue;
+                const prev = this.records[item.key]?.webDesc;
+                if (prev !== undefined) {
+                    if (prev) webDesc.set(item.key, prev); // 上次抓到过：复用，不再访问
+                    continue;                              // prev === ""：上次抓过没抓到，本次不重试
+                }
+                queued.add(item.key);
+                queue.push({ key: item.key, url: item.entry.url });
+            }
+            if (queue.length) {
+                log(`抓取网页描述：${queue.length} 条（8 并发，超时/失败静默跳过）...`);
+                let got = 0;
+                await mapWithConcurrency(queue, 8, async (q) => {
+                    const text = await fetchPageDescription(q.url);
+                    webDesc.set(q.key, text); // 失败也记 ""，标记为已尝试
+                    if (text) got++;
+                });
+                log(`网页描述：成功 ${got} 条，${queue.length - got} 条未取到（不会写空覆盖已有描述）`);
+            }
+        }
+        /** 单元格生效的描述：导出文件自带 > 抓取的网页 meta > 空 */
+        const effDesc = (key: string, entry: SyncBookmark): string => entry.description || webDesc.get(key) || "";
+        /** 组装同步记录（带上网页描述缓存） */
+        const mkRecord = (key: string, entry: SyncBookmark, now: number): BookmarkSyncRecord => {
+            const rec: BookmarkSyncRecord = {
+                url: entry.url,
+                title: entry.title,
+                hash: hashBookmark(entry, options.syncTags),
+                syncedAt: now,
+            };
+            const wd = webDesc.get(key) ?? this.records[key]?.webDesc;
+            if (wd !== undefined) rec.webDesc = wd;
+            return rec;
+        };
+
         const totalWork = toCreate.length + toUpdate.length;
         let done = 0;
         const progress = () => onProgress?.(done, totalWork);
         progress();
 
         // ---------- 新增：批量追加独立行 ----------
-        const createRows = (list: { entry: SyncBookmark }[]): AvValue[][] =>
-            list.map(({ entry }) => {
+        const createRows = (list: { entry: SyncBookmark; key: string }[]): AvValue[][] =>
+            list.map(({ entry, key }) => {
                 const values: AvValue[] = [blockValue(cols.name, entry.title)];
                 values.push(makeValue(cols.url, cols.types[cols.url] || "url", entry.url));
-                if (cols.desc && entry.description) values.push(textValue(cols.desc, entry.description));
+                const desc = effDesc(key, entry);
+                if (cols.desc && desc) values.push(textValue(cols.desc, desc));
                 if (cols.tags && options.syncTags) {
                     const items = tagItems(entry);
                     if (items.length) values.push(selectValue(cols.tags, items));
@@ -343,12 +532,7 @@ export class BookmarkSync {
                 const now = Date.now();
                 for (const item of chunk) {
                     summary.created++;
-                    this.records[item.key] = {
-                        url: item.entry.url,
-                        title: item.entry.title,
-                        hash: hashBookmark(item.entry, options.syncTags),
-                        syncedAt: now,
-                    };
+                    this.records[item.key] = mkRecord(item.key, item.entry, now);
                 }
                 log(`新增 ${chunk.length} 条（累计 ${summary.created}/${toCreate.length}）`);
             } catch (e) {
@@ -370,7 +554,11 @@ export class BookmarkSync {
                 if (dbTitle.get(item.itemID) !== item.entry.title) {
                     cells.push({ keyID: cols.name, itemID: item.itemID, value: blockValue(cols.name, item.entry.title) });
                 }
-                if (cols.desc) cells.push({ keyID: cols.desc, itemID: item.itemID, value: textValue(cols.desc, item.entry.description) });
+                if (cols.desc) {
+                    // 空描述不覆盖已有单元格（可能存着上次抓到的网页描述）
+                    const desc = effDesc(item.key, item.entry);
+                    if (desc) cells.push({ keyID: cols.desc, itemID: item.itemID, value: textValue(cols.desc, desc) });
+                }
                 if (cols.tags && options.syncTags) {
                     cells.push({ keyID: cols.tags, itemID: item.itemID, value: selectValue(cols.tags, tagItems(item.entry)) });
                 }
@@ -380,12 +568,7 @@ export class BookmarkSync {
                 const now = Date.now();
                 for (const item of chunk) {
                     summary.skipped++;
-                    this.records[item.key] = {
-                        url: item.entry.url,
-                        title: item.entry.title,
-                        hash: hashBookmark(item.entry, options.syncTags),
-                        syncedAt: now,
-                    };
+                    this.records[item.key] = mkRecord(item.key, item.entry, now);
                 }
                 done += chunk.length;
                 progress();
@@ -396,12 +579,7 @@ export class BookmarkSync {
                 const now = Date.now();
                 for (const item of chunk) {
                     summary.updated++;
-                    this.records[item.key] = {
-                        url: item.entry.url,
-                        title: item.entry.title,
-                        hash: hashBookmark(item.entry, options.syncTags),
-                        syncedAt: now,
-                    };
+                    this.records[item.key] = mkRecord(item.key, item.entry, now);
                 }
                 log(`更新 ${chunk.length} 条（累计 ${summary.updated}/${toUpdate.length}）`);
             } catch (e) {
