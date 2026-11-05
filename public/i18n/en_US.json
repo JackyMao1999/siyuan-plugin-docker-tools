@@ -112,7 +112,7 @@
     "feishuSearchLabel": "Keyword",
     "feishuSearchPlaceholder": "Empty = list ALL documents; or type a keyword (max 30 chars)",
     "feishuSearchBtn": "Search",
-    "feishuSearchHint": "Empty keyword = recursively aggregate ALL accessible documents (every Wiki node + Drive My Space) into a flat list. A keyword calls Feishu's search API, which is user-scoped (the app identity often gets nothing — use User identity). The right side shows the owner or location.",
+    "feishuSearchHint": "Discover accessible pages with user identity, grouped by space. Results may be incomplete; use keywords or a specific link to find missing pages. Selecting a group syncs discovered pages and the chosen recursive scope, not the entire space.",
     "feishuSearchNeedKeyword": "Please enter a keyword",
     "feishuSearchSearching": "Searching...",
     "feishuSearchEmpty": "No documents found (the app may lack the search:docs:read scope)",
@@ -163,5 +163,13 @@
     "bookmarkSyncing": "Syncing...",
     "bookmarkDone": "Bookmarks sync finished",
     "bookmarkDbRefresh": "Refresh",
-    "bookmarkDbStale": " (not in list; may have been deleted)"
+    "bookmarkDbStale": " (not in list; may have been deleted)",
+    "feishuSourceMyLibrary": "My Documents Library",
+    "feishuSourceWikiDiscovery": "Accessible Wiki pages",
+    "feishuWikiQuery": "Page keywords",
+    "feishuWikiQueryPlaceholder": "Leave empty to discover; search for missing pages",
+    "feishuWikiSearch": "Discover / Search",
+    "feishuMyLibraryHint": "Use user identity to browse My Documents Library. It is separate from My Space in Drive.",
+    "feishuWikiDiscoveryHint": "Discover accessible pages with user identity, grouped by space. Results may be incomplete; use keywords or a specific link to find missing pages. Selecting a group syncs discovered pages and the chosen recursive scope, not the entire space.",
+    "feishuDiscoveredPages": "Discovered pages"
 }

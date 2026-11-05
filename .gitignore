@@ -8,4 +8,21 @@ node_modules
 dev
 dist
 build
+
+# Local credentials, runtime data and diagnostics must never be published.
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+doc-export-config.json
+feishu-auth.json
+feishu-sync-*.json
+bookmark-sync-*.json
+data/
+storage/
 tmp

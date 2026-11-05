@@ -13,13 +13,19 @@ Import documents from Feishu Wiki / Feishu Drive into SiYuan as native documents
 
 ### Features
 
-- Three sources: **Feishu Wiki**, **Storage (Drive)**, **Specific link**.
+- Five sources: **Feishu Wiki**, **My Documents Library**, **Accessible Wiki pages**, **Storage (Drive)**, **Specific link**.
+- **My Documents Library**: browse the personal page tree with user identity, including pagination and recursive sync.
+- **Accessible Wiki pages**: discover or keyword-search accessible pages, grouped by space, including entries shared at page/subtree level. Results may be incomplete; use keywords or a specific link for missing pages. Selecting a group syncs discovered pages and the chosen recursive scope, not the entire space.
 - Sync from **Feishu Wiki**: browse knowledge spaces, recursively import sub-documents and keep the hierarchy.
 - Sync from **Feishu Storage (Drive)**: browse the cloud-space root or a specific folder.
 - **Specific link**: paste a doc `/docx/`, legacy doc `/docs/`, Wiki `/wiki/` or folder `/folder/` link to parse and sync it.
 - **Incremental sync**: skip documents whose Feishu edit time has not changed.
 - **Asset localization**: download images/attachments and store them in the SiYuan asset folder.
+- **Embedded spreadsheets**: import editable SiYuan tables with the first row as the header, preserving cell contents and calculated values returned by the API. Calculation behavior, merged cells and complex styles are not retained. This works independently of asset downloads; failed reads leave a placeholder with details in the sync log.
+- **Math blocks**: native Feishu equation blocks and `\[...\]` / `$$...$$` text become SiYuan math blocks. Multiple formulas in a paragraph become separate blocks, preserving surrounding text and styles. Native inline equations remain inline; code and links are not converted. Formulas inside table cells use inline math.
 - Choose the target notebook and root path; already-synced documents are updated in place instead of duplicated.
+
+> After updating, disable **Incremental sync** and sync again to replace existing spreadsheet placeholders or formula text. This overwrites the corresponding SiYuan document contents. Spreadsheet support covers embeds in modern documents only, not standalone spreadsheet links or Bitable.
 
 ### Identity: app vs user
 
@@ -38,10 +44,11 @@ dialog → `Finish`. See the built-in **Help** (search "user identity") for deta
 | Location | Supported | Notes |
 | --- | --- | --- |
 | Storage · cloud-space root | ✅ | "Storage (Drive)" source; leave it empty to browse the official cloud-space root |
-| Wiki knowledge base | ✅ | "Feishu Wiki" source — lists all spaces the identity has joined |
+| Wiki knowledge base | ✅ | "Feishu Wiki" source — lists spaces available through the API; use "Accessible Wiki pages" for page-level access |
 | Any document / folder | ✅ | "Specific link" source: paste a `/docx/`, `/wiki/` or `/folder/` link |
 | Shared space | ⚠️ link required | There is no "list shared spaces" API; paste the folder's browser link into "Specific link" or "Folder token / link" |
-| "My Documents Library" | ❌ | Personal page-tree module (beta), a separate module from "My Space"; no public Open API |
+| "My Documents Library" | ✅ User identity | Browse the page tree directly through its own source, separate from Drive "My Space" |
+| Shared Wiki page/subtree | ✅ User identity | Auto-discover / keyword-search "Accessible Wiki pages", or paste a specific link; access to the whole space is not implied |
 
 ### Setup
 
@@ -99,3 +106,5 @@ Import bookmarks exported from Chrome / Edge / Firefox / Safari into a SiYuan **
 > 💡 Why can't the plugin read browser data directly? Plugins run inside the browser sandbox without filesystem access, so Chrome's `Bookmarks` JSON and Firefox's `places.sqlite` are unreachable — "Export bookmarks to HTML" is the only channel every browser provides. The plugin keeps an automatic copy of each dropped file in the workspace (visible in your Docker volume under `data/bookmarks/`), so no path configuration is ever needed.
 
 > One-way import (browser → SiYuan) only; exporting a SiYuan database back to a bookmarks HTML and scheduled auto-sync are planned for later versions.
+
+API references: [List Wiki child nodes](https://open.feishu.cn/document/server-docs/docs/wiki-v2/space-node/list) (supports `my_library`) and [Search Wiki](https://open.feishu.cn/document/server-docs/docs/wiki-v2/search_wiki). Both new sources reuse existing user authorization; `search:docs:read` is not required.

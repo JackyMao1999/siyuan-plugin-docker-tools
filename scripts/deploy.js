@@ -3,11 +3,11 @@
  *
  * 用法示例：
  *   node scripts/deploy.js                                  # 构建 + 部署到自动检测的本地工作区
- *   node scripts/deploy.js --ws /home/kai/SiYuan            # 指定本地工作区路径
+ *   node scripts/deploy.js --ws /home/user/SiYuan            # 指定本地工作区路径
  *   node scripts/deploy.js --no-build                       # 跳过构建，用现有 dist/
  *   node scripts/deploy.js --dir /opt/siyuan/data/plugins --container siyuan
  *                                                           # 部署到宿主机挂载目录（Docker），并重启容器
- *   node scripts/deploy.js --remote kai@192.168.1.10 --dir /opt/siyuan/data/plugins --container siyuan
+ *   node scripts/deploy.js --remote user@192.168.1.10 --dir /opt/siyuan/data/plugins --container siyuan
  *                                                           # scp/ssh 部署到远程 Docker 主机（用 package.zip）
  *
  * 说明：

@@ -3,7 +3,7 @@
  */
 
 import { Dialog, confirm, showMessage } from "siyuan";
-import { FeishuClient, FeishuDriveFile, FeishuWikiNode } from "./feishu-api";
+import { FeishuClient, FeishuDriveFile, FeishuWikiNode, FeishuWikiSearchHit } from "./feishu-api";
 import {
     DEFAULT_SYNC_OPTIONS,
     FeishuSync,
@@ -13,7 +13,7 @@ import {
 } from "./feishu-sync";
 import { lsNotebooks } from "../api";
 
-type SourceType = "wiki" | "storage" | "link";
+type SourceType = "wiki" | "my-library" | "wiki-discovery" | "storage" | "link";
 
 /** 从链接或纯文本中解析飞书文件夹 token（支持直接粘贴文件夹链接） */
 function extractFolderToken(input: string): string {
@@ -66,13 +66,15 @@ export function parseFeishuLink(input: string): ParsedFeishuLink {
 }
 
 interface TreeNodeMeta {
-    kind: "space" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file" | "link-doc";
+    kind: "space" | "wiki-results" | "wiki-node" | "drive-root" | "drive-folder" | "drive-file" | "link-doc";
     key: string;
     title: string;
     /** wiki 空间 ID */
     spaceId?: string;
     /** wiki 节点 token */
     nodeToken?: string;
+    /** 搜索结果需要先解析节点详情，不能据此访问整个空间。 */
+    searchHit?: boolean;
     /** 是否可展开 */
     expandable?: boolean;
     /** 是否已加载子节点 */
@@ -139,6 +141,13 @@ export class FeishuSyncDialog {
     private incrementalInput: HTMLInputElement;
     private sourceNoteInput: HTMLInputElement;
     private options: FeishuSyncOptions;
+    private searchRow: HTMLElement;
+    private searchInput: HTMLInputElement;
+    private sourceHintEl: HTMLElement;
+    private treeVersion = 0;
+    private destroyed = false;
+    private discovering = false;
+    private spaceNames = new Map<string, string>();
 
     constructor(deps: FeishuSyncDialogDeps) {
         this.deps = deps;
@@ -150,6 +159,8 @@ export class FeishuSyncDialog {
             height: "640px",
             content: this.buildContent(),
             destroyCallback: () => {
+                this.destroyed = true;
+                this.treeVersion++;
                 syncing = false;
             },
         });
@@ -163,7 +174,11 @@ export class FeishuSyncDialog {
         this.spaceRow = root.querySelector("#feishu-space-row") as HTMLElement;
         this.notebookSelect = root.querySelector("#feishu-notebook") as HTMLSelectElement;
         this.rootPathInput = root.querySelector("#feishu-rootpath") as HTMLInputElement;
+        this.rootPathInput.value = this.options.rootPath;
         this.sourceSelect = root.querySelector("#feishu-source") as HTMLSelectElement;
+        this.searchRow = root.querySelector("#feishu-search-row") as HTMLElement;
+        this.searchInput = root.querySelector("#feishu-wiki-query") as HTMLInputElement;
+        this.sourceHintEl = root.querySelector("#feishu-source-hint") as HTMLElement;
         this.folderInput = root.querySelector("#feishu-folder") as HTMLInputElement;
         this.driveRow = root.querySelector("#feishu-drive-row") as HTMLElement;
         this.driveHintEl = root.querySelector("#feishu-drive-hint") as HTMLElement;
@@ -195,6 +210,8 @@ export class FeishuSyncDialog {
             <span class="feishu-sync__label">${this.t("feishuSourceType", "同步来源")}</span>
             <select id="feishu-source" class="b3-select fn__size200">
                 <option value="wiki">${this.t("feishuSourceWiki", "飞书知识库（Wiki）")}</option>
+                <option value="my-library">${this.t("feishuSourceMyLibrary", "我的文档库")}</option>
+                <option value="wiki-discovery">${this.t("feishuSourceWikiDiscovery", "可访问的 Wiki 页面")}</option>
                 <option value="storage">${this.t("feishuSourceStorage", "存储（云盘）")}</option>
                 <option value="link">${this.t("feishuSourceLink", "指定链接")}</option>
             </select>
@@ -206,6 +223,12 @@ export class FeishuSyncDialog {
             <span class="feishu-sync__label">${this.t("feishuSpace", "知识空间")}</span>
             <select id="feishu-space" class="b3-select fn__size200"></select>
         </div>
+        <div class="feishu-sync__row" id="feishu-search-row">
+            <span class="feishu-sync__label">${this.t("feishuWikiQuery", "页面关键词")}</span>
+            <input id="feishu-wiki-query" class="b3-text-field fn__flex-1" maxlength="50" placeholder="${this.t("feishuWikiQueryPlaceholder", "留空自动发现；输入关键词查找遗漏页面")}">
+            <button id="feishu-wiki-search" class="b3-button b3-button--outline">${this.t("feishuWikiSearch", "发现 / 搜索")}</button>
+        </div>
+        <div class="feishu-sync__hint" id="feishu-source-hint"></div>
         <div class="feishu-sync__row" id="feishu-drive-row">
             <span class="feishu-sync__label">${this.t("feishuFolderToken", "文件夹 token / 链接")}</span>
             <input id="feishu-folder" class="b3-text-field fn__flex-1" placeholder="${this.t("feishuFolderTokenPlaceholder", "留空 = 存储根目录；也可粘贴某个文件夹的链接")}">
@@ -221,7 +244,7 @@ export class FeishuSyncDialog {
             <span class="feishu-sync__label">${this.t("feishuNotebook", "目标笔记本")}</span>
             <select id="feishu-notebook" class="b3-select fn__size200"></select>
             <span class="feishu-sync__label">${this.t("feishuRootPath", "根路径")}</span>
-            <input id="feishu-rootpath" class="b3-text-field fn__size200" value="${this.options.rootPath}">
+            <input id="feishu-rootpath" class="b3-text-field fn__size200">
         </div>
         <div class="feishu-sync__row feishu-sync__options">
             <label><input type="checkbox" id="feishu-recursive"> ${this.t("feishuRecursive", "递归子文档")}</label>
@@ -246,6 +269,13 @@ export class FeishuSyncDialog {
             this.updateRowVisibility();
             void this.loadTree();
         };
+        (this.dialog.element.querySelector("#feishu-wiki-search") as HTMLElement).onclick = () => void this.loadTree();
+        this.searchInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                void this.loadTree();
+            }
+        });
         this.folderInput.addEventListener("change", () => {
             void this.loadTree();
         });
@@ -259,7 +289,10 @@ export class FeishuSyncDialog {
             }
         });
         (this.dialog.element.querySelector("#feishu-refresh") as HTMLElement).onclick = () => {
-            void this.loadTree();
+            void (async () => {
+                if (this.sourceSelect.value === "wiki") await this.loadSpaces();
+                if (!this.destroyed) await this.loadTree();
+            })();
         };
         this.spaceSelect.onchange = () => {
             void this.loadTree();
@@ -357,13 +390,17 @@ export class FeishuSyncDialog {
 
     private async loadSpaces() {
         try {
+            const previous = this.spaceSelect.value;
             const spaces = await this.deps.client.listWikiSpaces();
+            if (this.destroyed) return;
+            this.spaceNames = new Map(spaces.map(space => [space.space_id, space.name]));
             this.spaceSelect.innerHTML = "";
             for (const space of spaces) {
                 const option = document.createElement("option");
                 option.value = space.space_id;
                 option.textContent = space.name || space.space_id;
                 this.spaceSelect.appendChild(option);
+                if (space.space_id === previous) option.selected = true;
             }
             if (!spaces.length) {
                 const option = document.createElement("option");
@@ -388,19 +425,38 @@ export class FeishuSyncDialog {
         this.driveHintEl.classList.toggle("fn__none", !isStorage);
         this.linkRow.classList.toggle("fn__none", !isLink);
         this.linkHintEl.classList.toggle("fn__none", !isLink);
+        this.searchRow.classList.toggle("fn__none", source !== "wiki-discovery");
+        this.sourceHintEl.classList.toggle("fn__none", source !== "wiki-discovery" && source !== "my-library");
+        this.sourceHintEl.textContent = source === "my-library"
+            ? this.t("feishuMyLibraryHint", "使用用户身份读取「我的文档库」页面树；它与云盘「我的空间」是不同的来源。")
+            : this.t("feishuWikiDiscoveryHint", "使用用户身份发现可访问页面，按所属空间分组。结果不保证完整，可用关键词或指定链接补充；勾选分组只同步已发现页面及所选递归范围，不代表整个空间。");
     }
 
     private async loadTree() {
+        if (this.destroyed || syncing) return;
+        const version = ++this.treeVersion;
+        this.discovering = false;
+        this.syncBtn.disabled = !this.deps.client.isConfigured;
         this.treeEl.innerHTML = "";
         const source = this.sourceSelect.value as SourceType;
+        if (source === "my-library" || source === "wiki-discovery") {
+            if (this.deps.client.currentAuthMode !== "user") {
+                this.setStatus("此来源需要在设置中选择用户身份并完成授权。");
+                return;
+            }
+            if (source === "wiki-discovery") {
+                await this.loadWikiDiscovery(version);
+                return;
+            }
+        }
         if (source === "link") {
-            await this.loadLink();
+            await this.loadLink(version);
             return;
         }
-        if (source === "wiki") {
-            const spaceId = this.spaceSelect.value;
-            const spaceName = this.spaceSelect.selectedOptions[0]?.textContent || "知识库";
-            if (!spaceId) return;
+        if (source === "wiki" || source === "my-library") {
+            const spaceId = source === "my-library" ? "my_library" : this.spaceSelect.value;
+            const spaceName = source === "my-library" ? this.t("feishuSourceMyLibrary", "我的文档库") : this.spaceSelect.selectedOptions[0]?.textContent || "知识库";
+            if (!spaceId) { this.setStatus(""); return; }
             this.setStatus("正在加载知识库目录...");
             const spaceMeta: TreeNodeMeta = {
                 kind: "space",
@@ -419,6 +475,7 @@ export class FeishuSyncDialog {
             let basePath: string[] = [];
             if (folderToken) {
                 title = await this.getFolderLabel(folderToken);
+                if (!this.isCurrentTree(version)) return;
                 basePath = [sanitizeTitle(title)];
             }
             const rootMeta: TreeNodeMeta = {
@@ -440,7 +497,7 @@ export class FeishuSyncDialog {
     }
 
     /** 「指定链接」来源：解析粘贴的链接并渲染可同步节点 */
-    private async loadLink() {
+    private async loadLink(version: number) {
         const parsed = parseFeishuLink(this.linkInput.value);
         if (!parsed.raw) {
             this.setStatus(this.t("feishuLinkEmpty", "请输入飞书文档 / 知识库 / 文件夹链接"));
@@ -450,6 +507,7 @@ export class FeishuSyncDialog {
         try {
             if (parsed.type === "folder") {
                 const title = await this.getFolderLabel(parsed.token);
+                if (!this.isCurrentTree(version)) return;
                 const meta: TreeNodeMeta = {
                     kind: "drive-root",
                     key: `drive:${parsed.token}`,
@@ -463,6 +521,7 @@ export class FeishuSyncDialog {
                 this.appendLog(`已解析为文件夹：${title}（token: ${parsed.token}）`);
             } else if (parsed.type === "wiki") {
                 const node = await this.deps.client.getWikiNode(parsed.token);
+                if (!this.isCurrentTree(version)) return;
                 if (!node) {
                     this.appendLog("未能解析该知识库链接：请确认应用有权限，或换用「飞书知识库（Wiki）」来源浏览。");
                     return;
@@ -473,6 +532,7 @@ export class FeishuSyncDialog {
                 this.appendLog(`已解析为知识库节点：${node.title}（${node.obj_type}）`);
             } else if (parsed.type === "docx" || parsed.type === "doc") {
                 const title = await this.getDocTitleSafe(parsed.token, parsed.type);
+                if (!this.isCurrentTree(version)) return;
                 const meta: TreeNodeMeta = {
                     kind: "link-doc",
                     key: `drive:${parsed.token}`,
@@ -492,9 +552,86 @@ export class FeishuSyncDialog {
                 this.appendLog("目前支持：文档 /docx/、旧版文档 /docs/、知识库 /wiki/、文件夹 /folder/。");
             }
         } catch (e) {
-            this.appendLog(`解析链接失败：${e instanceof Error ? e.message : e}`);
+            if (this.isCurrentTree(version)) this.appendLog(`解析链接失败：${e instanceof Error ? e.message : e}`);
         } finally {
-            this.setStatus("");
+            if (this.isCurrentTree(version)) this.setStatus("");
+        }
+    }
+
+    private isCurrentTree(version: number): boolean {
+        return !this.destroyed && version === this.treeVersion;
+    }
+
+    private searchHitToMeta(hit: FeishuWikiSearchHit, path: string[]): TreeNodeMeta {
+        const meta = this.wikiNodeToMeta(hit.space_id || "", hit, path);
+        meta.searchHit = true;
+        meta.url = hit.url;
+        // 搜索响应没有子节点标记，展开时才查询详情，避免为每条结果额外请求。
+        meta.expandable = true;
+        meta.badge = hit.obj_type.toUpperCase();
+        meta.loader = async () => {
+            const resolved = await this.resolveSearchMeta(meta);
+            return resolved.loader ? resolved.loader() : [];
+        };
+        return meta;
+    }
+
+    private async resolveSearchMeta(meta: TreeNodeMeta): Promise<TreeNodeMeta> {
+        if (!meta.searchHit) return meta;
+        const node = await this.deps.client.getWikiNode(meta.nodeToken);
+        if (!node) throw new Error(`无法读取 Wiki 页面：${meta.title}（${meta.nodeToken}）`);
+        return { ...this.wikiNodeToMeta(node.space_id || meta.spaceId, node, meta.path), url: meta.url };
+    }
+
+    private async loadWikiDiscovery(version: number) {
+        const query = this.searchInput.value.trim();
+        const groups = new Map<string, HTMLElement>();
+        const seenNodes = new Set<string>();
+        const seenPages = new Set<string>();
+        let pageToken = "";
+        this.discovering = true;
+        this.syncBtn.disabled = true;
+        this.setStatus("正在发现可访问的 Wiki 页面...");
+        try {
+            do {
+                seenPages.add(pageToken);
+                const page = await this.deps.client.searchWikiNodes(query, pageToken);
+                if (!this.isCurrentTree(version)) return;
+                for (const hit of page.items) {
+                    if (!hit.node_token || seenNodes.has(hit.node_token)) continue;
+                    seenNodes.add(hit.node_token);
+                    const spaceId = hit.space_id || "unknown";
+                    const name = this.spaceNames.get(spaceId) || `Wiki-${spaceId}`;
+                    let children = groups.get(spaceId);
+                    if (!children) {
+                        const group = this.createNodeElement({
+                            kind: "wiki-results", key: `results:${spaceId}`, title: name,
+                            spaceId, expandable: true, loaded: true, path: [],
+                            badge: this.t("feishuDiscoveredPages", "已发现页面"),
+                        }, 0);
+                        children = group.querySelector(".feishu-sync__children") as HTMLElement;
+                        children.classList.remove("fn__none");
+                        group.querySelector(".feishu-sync__toggle").textContent = "▾";
+                        this.treeEl.appendChild(group);
+                        groups.set(spaceId, children);
+                    }
+                    children.appendChild(this.createNodeElement(this.searchHitToMeta(hit, [sanitizeTitle(name)]), 1));
+                }
+                this.setStatus(`已发现 ${seenNodes.size} 个页面，${groups.size} 个空间${page.hasMore ? "，继续读取..." : ""}`);
+                if (!page.hasMore) break;
+                if (!page.pageToken || seenPages.has(page.pageToken)) throw new Error("接口返回无效分页标记，发现尚未完成，请刷新重试。");
+                pageToken = page.pageToken;
+            } while (this.isCurrentTree(version));
+            if (!seenNodes.size) this.setStatus("未发现页面，可更换关键词或使用指定链接。");
+        } catch (e) {
+            if (!this.isCurrentTree(version)) return;
+            this.appendLog(`Wiki 页面发现未完成（已保留 ${seenNodes.size} 个结果）：${e instanceof Error ? e.message : e}`);
+            this.setStatus(`发现未完成，保留 ${seenNodes.size} 个页面；可刷新重试或使用指定链接。`);
+        } finally {
+            if (this.isCurrentTree(version)) {
+                this.discovering = false;
+                this.syncBtn.disabled = !this.deps.client.isConfigured;
+            }
         }
     }
 
@@ -590,6 +727,7 @@ export class FeishuSyncDialog {
             title: meta.title,
             spaceId: meta.spaceId,
             nodeToken: meta.nodeToken,
+            searchHit: meta.searchHit,
             expandable: meta.expandable,
             syncable: meta.syncable,
             objToken: meta.objToken,
@@ -663,7 +801,8 @@ export class FeishuSyncDialog {
                         children.appendChild(this.createNodeElement(child, depth + 1));
                     }
                 } catch (e) {
-                    children.innerHTML = `<div class="feishu-sync__empty">加载失败：${e instanceof Error ? e.message : e}</div>`;
+                    meta.loaded = false;
+                    children.textContent = `加载失败：${e instanceof Error ? e.message : e}（收起后可重试）`;
                 }
                 return;
             }
@@ -707,6 +846,7 @@ export class FeishuSyncDialog {
     private async collectSelectedItems(): Promise<FeishuSyncItem[]> {
         const items: FeishuSyncItem[] = [];
         const seen = new Set<string>();
+        const visitedWiki = new Set<string>();
         const push = (item: FeishuSyncItem) => {
             if (seen.has(item.key)) return;
             seen.add(item.key);
@@ -714,7 +854,16 @@ export class FeishuSyncDialog {
         };
 
         const collectWiki = async (spaceId: string, parentToken: string | undefined, path: string[]) => {
-            const nodes = await this.deps.client.listWikiNodes(spaceId, parentToken);
+            const branch = `${spaceId}:${parentToken || ""}`;
+            if (visitedWiki.has(branch)) return;
+            visitedWiki.add(branch);
+            let nodes: FeishuWikiNode[];
+            try {
+                nodes = await this.deps.client.listWikiNodes(spaceId, parentToken);
+            } catch (e) {
+                this.appendLog(`跳过无法读取的目录 ${path.join("/")}：${e instanceof Error ? e.message : e}`);
+                return;
+            }
             for (const node of nodes) {
                 if (node.obj_type === "docx" || node.obj_type === "doc") {
                     push({
@@ -753,56 +902,63 @@ export class FeishuSyncDialog {
         };
 
         // 遍历树上所有勾选节点：叶子文档直接收集，容器节点按需递归拉取
-        const walk = async (wrap: HTMLElement) => {
+        const walk = async (wrap: HTMLElement, groupSelected = false) => {
             for (const child of Array.from(wrap.children)) {
                 const node = child.querySelector(":scope > .feishu-sync__node") as HTMLElement;
                 const children = child.querySelector(":scope > .feishu-sync__children") as HTMLElement;
                 if (!node) continue;
                 const checkbox = node.querySelector(".feishu-sync__checkbox") as HTMLInputElement;
-                if (checkbox?.checked) {
-                    const meta: TreeNodeMeta = JSON.parse(checkbox.dataset.meta || "{}");
-                    const basePath = meta.path || [];
-                    if (meta.kind === "space" && meta.spaceId) {
-                        await collectWiki(meta.spaceId, undefined, [sanitizeTitle(meta.title)]);
-                    } else if (meta.kind === "wiki-node") {
-                        if (meta.syncable) {
-                            push({
-                                key: meta.key,
-                                objToken: meta.objToken,
-                                objType: meta.objType,
-                                title: meta.title,
-                                editTime: meta.editTime,
-                                path: basePath,
-                            });
+                let meta: TreeNodeMeta = JSON.parse(checkbox?.dataset.meta || "{}");
+                const selected = checkbox && !checkbox.disabled && (checkbox.checked || groupSelected);
+                if (selected) {
+                    try {
+                        meta = await this.resolveSearchMeta(meta);
+                        const basePath = meta.path || [];
+                        if (meta.kind === "space" && meta.spaceId) {
+                            await collectWiki(meta.spaceId, undefined, [sanitizeTitle(meta.title)]);
+                        } else if (meta.kind === "wiki-node") {
+                            if (meta.syncable) {
+                                push({
+                                    key: meta.key,
+                                    objToken: meta.objToken,
+                                    objType: meta.objType,
+                                    title: meta.title,
+                                    editTime: meta.editTime,
+                                    path: basePath,
+                                    url: meta.url,
+                                });
+                            }
+                            if (meta.expandable && meta.spaceId && (this.options.recursive || !meta.syncable)) {
+                                await collectWiki(
+                                    meta.spaceId,
+                                    meta.nodeToken,
+                                    [...basePath, sanitizeTitle(meta.title)]
+                                );
+                            }
+                        } else if (meta.kind === "drive-root" || meta.kind === "drive-folder") {
+                            const folderToken = meta.kind === "drive-root" ? (meta.objToken || "") : meta.objToken;
+                            const folderPath = meta.kind === "drive-root" ? basePath : [...basePath, sanitizeTitle(meta.title)];
+                            await collectDrive(folderToken, folderPath);
+                        } else if (meta.kind === "drive-file" || meta.kind === "link-doc") {
+                            if (meta.syncable) {
+                                push({
+                                    key: meta.key,
+                                    objToken: meta.objToken,
+                                    objType: meta.objType,
+                                    title: meta.title,
+                                    editTime: meta.editTime,
+                                    path: basePath,
+                                    url: meta.url,
+                                });
+                            }
                         }
-                        if (meta.expandable && meta.spaceId && (this.options.recursive || !meta.syncable)) {
-                            await collectWiki(
-                                meta.spaceId,
-                                meta.nodeToken,
-                                [...basePath, sanitizeTitle(meta.title)]
-                            );
-                        }
-                    } else if (meta.kind === "drive-root" || meta.kind === "drive-folder") {
-                        const folderToken = meta.kind === "drive-root" ? (meta.objToken || "") : meta.objToken;
-                        const folderPath = meta.kind === "drive-root" ? basePath : [...basePath, sanitizeTitle(meta.title)];
-                        await collectDrive(folderToken, folderPath);
-                    } else if (meta.kind === "drive-file" || meta.kind === "link-doc") {
-                        if (meta.syncable) {
-                            push({
-                                key: meta.key,
-                                objToken: meta.objToken,
-                                objType: meta.objType,
-                                title: meta.title,
-                                editTime: meta.editTime,
-                                path: basePath,
-                                url: meta.url,
-                            });
-                        }
+                    } catch (e) {
+                        this.appendLog(`跳过无法读取的页面 ${meta.title}：${e instanceof Error ? e.message : e}`);
                     }
                 }
                 // 继续遍历已加载的子节点，以便收集被单独勾选的深层文档（重复项由 seen 去重）
                 if (children && children.children.length) {
-                    await walk(children);
+                    await walk(children, !!selected && meta.kind === "wiki-results");
                 }
             }
         };
@@ -812,7 +968,7 @@ export class FeishuSyncDialog {
     }
 
     private async handleSync() {
-        if (syncing) return;
+        if (syncing || this.discovering) return;
         this.collectOptions();
         if (!this.options.notebook) {
             showMessage(this.t("feishuNoNotebook", "请选择目标笔记本"), 4000, "error");

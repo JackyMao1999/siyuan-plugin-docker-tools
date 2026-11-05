@@ -9,7 +9,7 @@
  *    → 把地址栏里的完整回调地址（含 code）粘回来即可。
  */
 
-import { FeishuClient, forwardProxy, parseJsonBody } from "./feishu-api";
+import { FeishuClient, forwardProxy, parseJsonBody, trustedFeishuDomain } from "./feishu-api";
 
 /**
  * 用户授权默认申请的权限（offline_access 用于获取 refresh_token）
@@ -252,7 +252,7 @@ export class FeishuAuth {
 
     /** 调用 OAuth2 令牌接口 */
     private async requestToken(domain: string, payload: Record<string, any>): Promise<any> {
-        const url = `${domain}/open-apis/authen/v2/oauth/token`;
+        const url = `${trustedFeishuDomain(domain)}/open-apis/authen/v2/oauth/token`;
         const resp = await forwardProxy(url, {
             method: "POST",
             contentType: "application/json; charset=utf-8",

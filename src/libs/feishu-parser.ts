@@ -51,6 +51,8 @@ export interface ParseContext {
     resolveFile?: (block: FeishuBlock) => Promise<string | null>;
     /** 画板块（mermaid / 流程图）-> 思源资源相对路径，返回 null 表示未能本地化 */
     resolveBoard?: (block: FeishuBlock) => Promise<string | null>;
+    /** 内嵌电子表格 -> 单元格值；空数组表示空表，失败时抛出具体原因 */
+    resolveSheet?: (block: FeishuBlock) => Promise<unknown[][]>;
     /** 进度回调 */
     onProgress?: (message: string) => void;
 }
@@ -62,6 +64,8 @@ interface ParserState {
     visited: Set<string>;
     /** 本次解析中未能完整转换的内容，最后汇总到同步日志 */
     issues: string[];
+    /** Markdown 表格单元格只能容纳行内公式 */
+    inTableCell?: boolean;
 }
 
 /** 记录一处未能转换的内容（同一类只记一次，最后按数量汇总） */
@@ -71,11 +75,11 @@ function noteIssue(state: ParserState, label: string): void {
 
 /**
  * 转义会破坏 Markdown 语法的字符：
- * - `\`、`` ` ``、`*`、`_`、`$`、`|`
+ * - `\`、`` ` ``、`*`、`_`、`$`、`|`、`^`
  * - 其中 `$` 必须转义，否则正文里的金额等 `$` 会与公式的 `$` 错误配对
  * - `*`/`_` 转义后可避免 `a*b*c` 这类文本被误判为强调
  */
-function escapeMd(text: string): string {
+function escapeMd(text: string, escapeCaret = true): string {
     return (text || "")
         .replace(/\\/g, "\\\\")
         .replace(/`/g, "\\`")
@@ -83,6 +87,7 @@ function escapeMd(text: string): string {
         .replace(/_/g, "\\_")
         .replace(/\$/g, "\\$")
         .replace(/\|/g, "\\|")
+        .replace(/\^/g, escapeCaret ? "\\^" : "^")
         .replace(/\r?\n/g, " ");
 }
 
@@ -101,6 +106,110 @@ function renderInlineMath(content: string): string {
     const formula = (content || "").replace(/\s*\n\s*/g, " ").trim();
     if (!formula) return "";
     return /^\d/.test(formula) ? `$ ${formula} $` : `$${formula}$`;
+}
+
+function renderBlockMath(content: string): string {
+    const formula = (content || "").replace(/\r\n?/g, "\n").trim();
+    return formula ? `$$\n${formula}\n$$` : "";
+}
+
+/** 逐个配对显示公式分隔符；不跨越不匹配的分隔符吞并正文或另一条公式。 */
+function mathRanges(raw: string): { start: number; end: number; formula: string }[] {
+    const ranges: { start: number; end: number; formula: string }[] = [];
+    const delimiters = /(?<!\\)\\{1,2}[\[\]]|(?<![\\$])\$+(?!\$)/g;
+    let opening: { start: number; end: number; delimiter: string } | undefined;
+    for (const match of raw.matchAll(delimiters)) {
+        const token = match[0];
+        if (token.startsWith("$") && token.length % 2 !== 0) {
+            opening = undefined;
+            continue;
+        }
+        // 相邻 $$ 公式的中间是 $$$$，需分别作为上一条的结尾和下一条的开头。
+        const delimiter = token.startsWith("$") ? "$$" : token;
+        for (let start = match.index!; start < match.index! + token.length; start += delimiter.length) {
+            const end = start + delimiter.length;
+            if (delimiter.endsWith("]") || (delimiter === "$$" && opening?.delimiter === "$$")) {
+                if (opening && delimiter === opening.delimiter.replace("[", "]")) {
+                    const formula = raw.slice(opening.end, start);
+                    if (formula.trim()) ranges.push({ start: opening.start, end, formula: formula.replace(/\\{1,2}_(?=\{)/g, "_") });
+                }
+                opening = undefined;
+            } else {
+                opening = { start, end, delimiter };
+            }
+        }
+    }
+    return ranges;
+}
+
+/** 截取原始文本区间，保留公式之外的加粗、颜色等富文本样式。 */
+function sliceTextRuns(elements: FeishuTextElement[], start: number, end: number): FeishuTextElement[] {
+    const result: FeishuTextElement[] = [];
+    let offset = 0;
+    for (const el of elements) {
+        const run = el.text_run;
+        const text = run.content || "";
+        const content = text.slice(Math.max(0, start - offset), Math.max(0, Math.min(text.length, end - offset)));
+        if (content) result.push({ ...el, text_run: { ...run, content } });
+        offset += text.length;
+        if (offset >= end) break;
+    }
+    return result;
+}
+
+/** 先在相邻文本片段中识别公式，再分别渲染正文和公式；代码、链接等形成识别边界。 */
+function paragraphFrom(elements: FeishuTextElement[], state: ParserState): string {
+    const parts: string[] = [];
+    let pending: FeishuTextElement[] = [];
+    const flushText = () => {
+        const text = inlineFrom(pending);
+        if (text.trim()) parts.push(text);
+        pending = [];
+    };
+    const canScan = (el: FeishuTextElement) => el?.text_run
+        && !el.text_run.text_element_style?.inline_code && !el.text_run.text_element_style?.link;
+    for (let i = 0; i < elements.length;) {
+        if (!canScan(elements[i])) {
+            pending.push(elements[i++]);
+            continue;
+        }
+        const start = i;
+        while (i < elements.length && canScan(elements[i])) i++;
+        const group = elements.slice(start, i);
+        const raw = group.map((el) => el.text_run.content || "").join("");
+        let offset = 0;
+        for (const range of mathRanges(raw)) {
+            pending.push(...sliceTextRuns(group, offset, range.start));
+            if (state.inTableCell) {
+                // 相邻行内公式不能输出成 $x$$y$，否则分隔符可能被重新配对。
+                if (pending[pending.length - 1]?.equation) pending.push({ text_run: { content: " " } });
+                pending.push({ equation: { content: range.formula } });
+            } else {
+                flushText();
+                parts.push(renderBlockMath(range.formula));
+            }
+            offset = range.end;
+        }
+        pending.push(...sliceTextRuns(group, offset, raw.length));
+    }
+    flushText();
+    return parts.join("\n\n");
+}
+
+/** 列表首行带 marker，公式后续行需按内容列缩进。 */
+function listText(text: string, marker: string, prefix: string): string {
+    const [first, ...rest] = text.split("\n");
+    const task = /^- \[[ xX]\] $/.test(marker);
+    // Lute 的任务列表首条公式沿用完整 marker 宽度，后续块只按 "- " 缩进。
+    let firstTaskMath = task && first === "$$";
+    const continuation = rest.map((line) => {
+        const indent = task && !firstTaskMath ? 2 : marker.length;
+        const rendered = line ? prefix + " ".repeat(indent) + line : "";
+        if (firstTaskMath && line === "$$") firstTaskMath = false;
+        return rendered;
+    });
+    return prefix + marker + first
+        + (rest.length ? "\n" + continuation.join("\n") : "");
 }
 
 /** 转义 HTML 属性值（URL 里的引号与 & 会破坏行内元素结构） */
@@ -125,7 +234,7 @@ function escapeHtmlAttr(value: string): string {
 function renderTextRun(core: string, style: any): string {
     if (style.inline_code) {
         // 行内代码是字面内容，不能再套行内元素
-        return "`" + escapeMd(core) + "`";
+        return "`" + escapeMd(core, false) + "`";
     }
 
     const types: string[] = [];
@@ -313,7 +422,14 @@ async function renderTable(block: FeishuBlock, state: ParserState, prefix: strin
         const row: string[] = [];
         for (const cellId of rowIds) {
             const cell = state.map.get(cellId);
-            let content = cell ? await renderChildren(cell.children, state, "") : "";
+            let content = "";
+            const wasInTableCell = state.inTableCell;
+            state.inTableCell = true;
+            try {
+                content = cell ? await renderChildren(cell.children, state, "") : "";
+            } finally {
+                state.inTableCell = wasInTableCell;
+            }
             content = content.replace(/\n+/g, "<br>").replace(/\|/g, "\\|").trim();
             row.push(content);
         }
@@ -330,6 +446,45 @@ async function renderTable(block: FeishuBlock, state: ParserState, prefix: strin
         lines.push("| " + rows[i].join(" | ") + " |");
     }
     return prefixLines(lines.join("\n"), prefix);
+}
+
+/** 表格内容按纯文本处理，防止单元格中的 HTML、链接或公式被再次解释。 */
+function sheetCell(value: unknown, state: ParserState): string {
+    if (value == null) return "";
+    if (Array.isArray(value)) return value.map((part) => sheetCell(part, state)).join("");
+    if (typeof value === "object") {
+        // 飞书的富文本/链接单元格可能返回带 text 的片段数组。
+        if (typeof (value as { text?: unknown }).text === "string") {
+            return sheetCell((value as { text: string }).text, state);
+        }
+        noteIssue(state, "电子表格含无法转换的单元格（已保留提示）");
+        return "[无法转换的单元格]";
+    }
+    return String(value).split(/\r\n?|\n/).map((line) => escapeMd(line)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/\[/g, "\\[").replace(/\]/g, "\\]")
+    ).join("<br>");
+}
+
+async function renderSheet(block: FeishuBlock, state: ParserState, prefix: string): Promise<string> {
+    const token = block.sheet?.token || "";
+    try {
+        if (!state.ctx.resolveSheet) throw new Error("电子表格读取器未配置");
+        const values = await state.ctx.resolveSheet(block);
+        const columns = values.reduce((max, row) => Math.max(max, row.length), 0);
+        if (!columns) return prefix + "> 电子表格为空";
+        const rows = values.map((row) => Array.from({ length: columns }, (_, col) => sheetCell(row[col], state)));
+        const lines = [rows[0], Array(columns).fill("---"), ...rows.slice(1)]
+            .map((row) => "| " + row.join(" | ") + " |");
+        return prefixLines(lines.join("\n"), prefix);
+    } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        const code = e instanceof Error && "code" in e ? `（错误码：${e.code}）` : "";
+        noteIssue(state, "电子表格未能同步");
+        state.ctx.onProgress?.(`  ✘ 电子表格同步失败（token: ${token}）：${message}${code}`);
+        state.ctx.onProgress?.("     → 请检查当前身份是否有表格阅读权限，以及 drive:drive:readonly 是否已开通并发布；用户身份新增权限后需重新授权。若接口提示数据超限，请缩小源表范围后重试。");
+        return prefix + `> ⚠️ 电子表格未能同步（token: ${escapeMd(token)}，详见同步日志）`;
+    }
 }
 
 async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", orderedIndex = 1): Promise<string> {
@@ -359,8 +514,8 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             return renderChildren(block.children, state, prefix);
         }
         case 2: { // 段落
-            const text = inlineFrom(elements);
-            return text ? prefix + text : "";
+            const text = paragraphFrom(elements, state);
+            return text ? prefixLines(text, prefix) : "";
         }
         case 3:
         case 4:
@@ -377,18 +532,18 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
         }
         case 12: { // 无序列表
             const marker = "- ";
-            const text = inlineFrom(elements);
+            const text = paragraphFrom(elements, state);
             const child = await renderChildren(block.children, state, prefix + " ".repeat(marker.length));
-            return (text ? prefix + marker + text : prefix + "-") + (child ? "\n" + child : "");
+            return (text ? listText(text, marker, prefix) : prefix + "-") + (child ? "\n" + child : "");
         }
         case 13: { // 有序列表
             // 按飞书返回的序号（sequence）渲染，缺失时按顺序递增
             const sequence = Number(style?.sequence);
             const index = Number.isFinite(sequence) && sequence > 0 ? sequence : orderedIndex;
             const marker = `${index}. `;
-            const text = inlineFrom(elements);
+            const text = paragraphFrom(elements, state);
             const child = await renderChildren(block.children, state, prefix + " ".repeat(marker.length));
-            return (text ? prefix + marker + text : prefix + `${index}.`) + (child ? "\n" + child : "");
+            return (text ? listText(text, marker, prefix) : prefix + `${index}.`) + (child ? "\n" + child : "");
         }
         case 14: { // 代码块
             const lang = CODE_LANGUAGE[style?.language] || "";
@@ -396,7 +551,7 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             return prefixLines("```" + lang + "\n" + code + "\n```", prefix);
         }
         case 15: { // 引用（旧版）-> 思源引述块（NodeBlockquote，内部是 NodeParagraph）
-            const text = inlineFrom(elements);
+            const text = paragraphFrom(elements, state);
             const child = await renderChildren(block.children, state, "");
             return wrapAsQuote([text, child].filter(Boolean).join("\n"), prefix);
         }
@@ -416,16 +571,17 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             }
             return quoteLines([`[!${calloutType}]`, ...lines], prefix);
         }
-        case 16: { // 公式块 -> 独立成段的行内公式
-            const content = block.equation?.content || inlineFrom(elements);
-            const math = renderInlineMath(content);
-            return math ? prefix + math : "";
+        case 16: { // 公式块 -> 思源原生块级公式
+            const content = block.equation?.content || (block.equation?.elements || elements)
+                .map((el: FeishuTextElement) => el.equation?.content || el.text_run?.content || "").join("");
+            const math = state.inTableCell ? renderInlineMath(content) : renderBlockMath(content);
+            return math ? prefixLines(math, prefix) : "";
         }
         case 17: { // 待办
             const marker = style?.done ? "- [x] " : "- [ ] ";
-            const text = inlineFrom(elements);
-            const child = await renderChildren(block.children, state, prefix + " ".repeat(marker.length));
-            return (prefix + marker + text) + (child ? "\n" + child : "");
+            const text = paragraphFrom(elements, state);
+            const child = await renderChildren(block.children, state, prefix + "  ");
+            return listText(text, marker, prefix) + (child ? "\n" + child : "");
         }
         case 22: { // 分割线
             return prefix + "---";
@@ -503,8 +659,7 @@ async function renderBlock(block: FeishuBlock, state: ParserState, prefix = "", 
             return prefix + `> 思维笔记暂不支持同步`;
         }
         case 30: {
-            noteIssue(state, "电子表格不支持同步");
-            return prefix + `> 电子表格暂不支持同步（token: ${block.sheet?.token || ""}）`;
+            return renderSheet(block, state, prefix);
         }
         case 42: {
             return prefix + `> 知识库目录块`;

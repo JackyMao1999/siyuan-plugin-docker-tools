@@ -418,6 +418,10 @@ export default class DocExportPlugin extends Plugin {
             }
         });
 
+        const appSecretInput = this.settingUtils.getElement("feishuAppSecret") as HTMLInputElement;
+        appSecretInput.type = "password";
+        appSecretInput.autocomplete = "off";
+
         this.settingUtils.addItem({
             key: "feishuAuthMode",
             value: "tenant",

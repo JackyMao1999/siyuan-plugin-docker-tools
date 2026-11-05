@@ -112,7 +112,7 @@
     "feishuSearchLabel": "关键词",
     "feishuSearchPlaceholder": "留空=汇总列出全部文档；或输入关键词搜索（最多 30 字）",
     "feishuSearchBtn": "搜索",
-    "feishuSearchHint": "关键词留空 = 递归汇总「全部可访问文档」（所有知识空间节点 + 云盘我的空间）并扁平列出；输入关键词 = 调用飞书搜索接口（该接口按「用户可见」设计，应用身份常常搜不到，建议用「用户身份」）。右侧显示所有者或所在位置。",
+    "feishuSearchHint": "使用用户身份发现可访问页面，按所属空间分组。结果不保证完整，可用关键词或指定链接补充；勾选分组只同步已发现页面及所选递归范围，不代表整个空间。",
     "feishuSearchNeedKeyword": "请输入搜索关键词",
     "feishuSearchSearching": "搜索中...",
     "feishuSearchEmpty": "没有搜索到文档（也可能是应用缺少 search:docs:read 权限）",
@@ -163,5 +163,13 @@
     "bookmarkSyncing": "同步中...",
     "bookmarkDone": "书签同步完成",
     "bookmarkDbRefresh": "刷新",
-    "bookmarkDbStale": "（未在列表中找到，可能已删除）"
+    "bookmarkDbStale": "（未在列表中找到，可能已删除）",
+    "feishuSourceMyLibrary": "我的文档库",
+    "feishuSourceWikiDiscovery": "可访问的 Wiki 页面",
+    "feishuWikiQuery": "页面关键词",
+    "feishuWikiQueryPlaceholder": "留空自动发现；输入关键词查找遗漏页面",
+    "feishuWikiSearch": "发现 / 搜索",
+    "feishuMyLibraryHint": "使用用户身份读取「我的文档库」页面树；它与云盘「我的空间」是不同的来源。",
+    "feishuWikiDiscoveryHint": "使用用户身份发现可访问页面，按所属空间分组。结果不保证完整，可用关键词或指定链接补充；勾选分组只同步已发现页面及所选递归范围，不代表整个空间。",
+    "feishuDiscoveredPages": "已发现页面"
 }

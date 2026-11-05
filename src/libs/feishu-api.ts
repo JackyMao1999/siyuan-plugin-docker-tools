@@ -14,6 +14,15 @@ import { fetchSyncPost } from "siyuan";
 export const FEISHU_DOMAIN_CN = "https://open.feishu.cn";
 export const FEISHU_DOMAIN_LARK = "https://open.larksuite.com";
 
+/** 凭据只发送到设置面板支持的官方 API 域名，拒绝损坏或被篡改的配置。 */
+export function trustedFeishuDomain(domain: string): string {
+    const normalized = (domain || FEISHU_DOMAIN_CN).trim().replace(/\/+$/, "");
+    if (normalized !== FEISHU_DOMAIN_CN && normalized !== FEISHU_DOMAIN_LARK) {
+        throw new Error("飞书 API 域名无效，请在设置中重新选择飞书或 Lark 官方服务。");
+    }
+    return normalized;
+}
+
 /** forwardProxy 返回结构（已做字段兼容归一化） */
 export interface ProxyResponse {
     status: number;
@@ -82,6 +91,11 @@ export interface FeishuWikiNode {
     has_child?: boolean;
     obj_edit_time?: string;
     obj_create_time?: string;
+}
+
+/** Wiki 搜索不返回 has_child / 编辑时间，展开或同步时再读取节点详情。 */
+export interface FeishuWikiSearchHit extends FeishuWikiNode {
+    url?: string;
 }
 
 export interface FeishuDriveFile {
@@ -193,7 +207,7 @@ export async function forwardProxy(url: string, opts: ProxyOptions): Promise<Pro
 /**
  * 解析响应体为 JSON 对象；非 JSON 时给出可读的错误信息
  */
-export function parseJsonBody(resp: ProxyResponse, url: string): any {
+export function parseJsonBody(resp: ProxyResponse, _url: string): any {
     const text = typeof resp.body === "string" ? resp.body.trim() : "";
     if (!text) {
         throw new Error(`飞书接口返回空响应 (HTTP ${resp.status || "未知"})`);
@@ -201,9 +215,8 @@ export function parseJsonBody(resp: ProxyResponse, url: string): any {
     try {
         return JSON.parse(text);
     } catch (e) {
-        const snippet = text.length > 300 ? text.slice(0, 300) + "..." : text;
-        console.error("飞书接口非 JSON 响应:", url, text);
-        throw new Error(`飞书接口返回了非 JSON 响应 (HTTP ${resp.status || "未知"})：${snippet}`);
+        // 响应可能含令牌、授权码或文档正文；日志和错误提示均不输出原文/请求 URL。
+        throw new Error(`飞书接口返回了非 JSON 响应 (HTTP ${resp.status || "未知"})`);
     }
 }
 
@@ -225,7 +238,7 @@ export class FeishuClient {
 
     setCredentials(credentials: FeishuCredentials) {
         const changed = credentials.appId !== this.appId || credentials.appSecret !== this.appSecret || credentials.domain !== this.domain;
-        this.domain = (credentials.domain || FEISHU_DOMAIN_CN).replace(/\/+$/, "");
+        this.domain = trustedFeishuDomain(credentials.domain);
         this.appId = (credentials.appId || "").trim();
         this.appSecret = (credentials.appSecret || "").trim();
         this.authMode = credentials.authMode === "user" ? "user" : "tenant";
@@ -370,12 +383,17 @@ export class FeishuClient {
     /** 获取知识空间的子节点列表（自动翻页） */
     async listWikiNodes(spaceId: string, parentNodeToken?: string): Promise<FeishuWikiNode[]> {
         const result: FeishuWikiNode[] = [];
+        const seenPages = new Set<string>();
         let pageToken = "";
         do {
+            seenPages.add(pageToken);
             const data = await this.request(`/open-apis/wiki/v2/spaces/${encodeURIComponent(spaceId)}/nodes`, {
                 query: { page_size: 50, page_token: pageToken, parent_node_token: parentNodeToken },
             });
             result.push(...(data.items || []));
+            if (data.has_more && (!data.page_token || seenPages.has(data.page_token))) {
+                throw new Error("Wiki 目录分页标记无效，未能完整读取目录，请重试。");
+            }
             pageToken = data.has_more ? data.page_token : "";
         } while (pageToken);
         return result;
@@ -387,6 +405,37 @@ export class FeishuClient {
             query: { token: nodeToken, obj_type: "wiki" },
         });
         return data?.node || null;
+    }
+
+    /** 搜索用户可访问的 Wiki 页面；空关键词用于发现入口，不保证穷举全部页面。 */
+    async searchWikiNodes(query = "", pageToken = ""): Promise<{
+        items: FeishuWikiSearchHit[];
+        hasMore: boolean;
+        pageToken: string;
+    }> {
+        if (this.currentAuthMode !== "user") throw new Error("Wiki 页面发现需要使用用户身份并完成授权。");
+        if (query.length > 50) throw new Error("Wiki 搜索关键词不能超过 50 个字符。");
+        const data = await this.request("/open-apis/wiki/v2/nodes/search", {
+            method: "POST",
+            query: { page_size: 50, page_token: pageToken },
+            body: { query },
+        });
+        const types: Record<number, string> = {
+            1: "doc", 2: "sheet", 3: "bitable", 4: "mindnote", 5: "file",
+            6: "slide", 7: "wiki", 8: "docx", 9: "folder", 10: "catalog", 11: "slides",
+        };
+        return {
+            items: (data.items || []).map((item: any) => ({
+                node_token: item.node_id,
+                space_id: item.space_id,
+                obj_token: item.obj_token,
+                obj_type: types[item.obj_type] || "unknown",
+                title: item.title || "未命名",
+                url: item.url,
+            })),
+            hasMore: !!data.has_more,
+            pageToken: data.page_token || "",
+        };
     }
 
     /**
@@ -481,6 +530,30 @@ export class FeishuClient {
             pageToken = data.has_more ? data.page_token : "";
         } while (pageToken);
         return result;
+    }
+
+    /**
+     * 读取文档内嵌电子表格。块 token 为 SpreadsheetToken_SheetID，不能整串传给 Sheets API。
+     * range 只传 SheetID，读取非空最大范围；FormattedValue 返回计算结果而非公式表达式。
+     * 复用已有 drive:drive:readonly 授权；接口超限或无权限时抛错，由解析器保留占位提示。
+     */
+    async getEmbeddedSheetValues(blockToken: string): Promise<unknown[][]> {
+        const separator = (blockToken || "").lastIndexOf("_");
+        if (separator <= 0 || separator === blockToken.length - 1) {
+            throw new Error("电子表格 token 格式无效，应为 SpreadsheetToken_SheetID");
+        }
+        const spreadsheetToken = blockToken.slice(0, separator);
+        const sheetId = blockToken.slice(separator + 1);
+        const data = await this.request(
+            `/open-apis/sheets/v2/spreadsheets/${encodeURIComponent(spreadsheetToken)}/values/${encodeURIComponent(sheetId)}`,
+            { query: { valueRenderOption: "FormattedValue" } }
+        );
+        const range = data?.valueRange;
+        if (!range || (range.values != null && (!Array.isArray(range.values) || !range.values.every(Array.isArray)))) {
+            throw new Error("电子表格接口返回的数据格式异常，未能读取完整表格");
+        }
+        // 空工作表可能省略 values 或返回 null，不能与接口缺少 valueRange 混为一谈。
+        return range.values || [];
     }
 
     /** 新版文档纯文本内容（降级方案） */

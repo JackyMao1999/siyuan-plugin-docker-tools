@@ -2,7 +2,7 @@
  * 飞书文档 -> 思源笔记 同步引擎
  */
 
-import { Plugin } from "siyuan";
+import { getAllEditor, Plugin } from "siyuan";
 import { FeishuBlock, FeishuClient } from "./feishu-api";
 import { docxBlocksToMarkdown } from "./feishu-parser";
 import { markdownToBlockDom } from "./siyuan-dom";
@@ -93,7 +93,7 @@ export function sanitizeTitle(title: string): string {
 
 /**
  * 把长 Markdown 按顶层块边界切分成多批，避免单次写入过大被截断。
- * 切分点只取「代码围栏之外的空行」，因此不会把代码块/表格切坏。
+ * 切分点只取代码/公式围栏之外的空行，避免把完整的块切坏。
  */
 export function splitMarkdownChunks(markdown: string, maxChars = 40000): string[] {
     const lines = (markdown || "").split("\n");
@@ -101,6 +101,7 @@ export function splitMarkdownChunks(markdown: string, maxChars = 40000): string[
     let current: string[] = [];
     let currentLen = 0;
     let inFence = false;
+    let inMath = false;
 
     const flush = () => {
         const text = current.join("\n").trim();
@@ -109,12 +110,20 @@ export function splitMarkdownChunks(markdown: string, maxChars = 40000): string[
         currentLen = 0;
     };
 
-    for (const line of lines) {
-        if (/^\s*```/.test(line)) inFence = !inFence;
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        const line = lines[lineIndex];
+        // 公式可能位于列表或引用中；只识别独占一行的 $$，不把正文里的金额当围栏。
+        const content = line.replace(/^(?:\s*>\s*)*/, "").trim()
+            .replace(/^(?:[-+*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, "");
+        if (!inMath && /^```/.test(content)) inFence = !inFence;
+        if (!inFence && content === "$$") inMath = !inMath;
         current.push(line);
         currentLen += line.length + 1;
-        if (!inFence && line.trim() === "" && currentLen >= maxChars) {
-            flush();
+        if (!inFence && !inMath && line.trim() === "" && currentLen >= maxChars) {
+            // 同一列表项中的多条公式/正文由空行分隔，后续缩进块必须随列表一起写入。
+            let next = lineIndex + 1;
+            while (next < lines.length && !lines[next].trim()) next++;
+            if (next === lines.length || !/^\s/.test(lines[next])) flush();
         }
     }
     flush();
@@ -345,6 +354,7 @@ export class FeishuSync {
             const blocks: FeishuBlock[] = await this.client.getDocxBlocks(item.objToken);
             blockCount = blocks.length;
             markdown = await docxBlocksToMarkdown(blocks, {
+                resolveSheet: (block: FeishuBlock) => this.client.getEmbeddedSheetValues(block.sheet?.token || ""),
                 resolveImage: options.syncAssets
                     ? async (block: FeishuBlock) => this.resolveAsset(block.image?.token, "image")
                     : undefined,
@@ -492,7 +502,32 @@ export class FeishuSync {
             onProgress?.(done, items.length, result);
         }
         await this.saveRecords();
+        this.refreshOpenDocuments(results, log);
         return results;
+    }
+
+    /**
+     * 批量替换正文后，已打开的编辑器可能仍留着未渲染的公式占位 DOM。
+     * 从内核重载本次成功写入的文档，让思源走完整渲染流程；不抢焦点、不打开新页签。
+     */
+    private refreshOpenDocuments(results: SyncResult[], log?: (msg: string) => void): void {
+        const writtenIds = new Set(results
+            .filter((result) => result.status === "created" || result.status === "updated")
+            .map((result) => result.docId).filter(Boolean));
+        if (!writtenIds.size || typeof getAllEditor !== "function") return;
+        try {
+            for (const editor of getAllEditor()) {
+                if (!writtenIds.has(editor.protyle?.block?.rootID)) continue;
+                try {
+                    editor.reload(false);
+                } catch (e) {
+                    // 界面刷新失败不能把已经成功保存的内容报成同步失败。
+                    log?.(`  ⚠️ 文档已写入，界面刷新失败，请关闭该页签后重新打开：${e instanceof Error ? e.message : String(e)}`);
+                }
+            }
+        } catch (e) {
+            log?.("  ⚠️ 文档已写入，无法刷新已打开的编辑器；若公式显示为空，请关闭文档页签后重新打开。");
+        }
     }
 }
 

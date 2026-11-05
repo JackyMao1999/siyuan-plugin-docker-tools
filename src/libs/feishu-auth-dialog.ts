@@ -3,7 +3,7 @@
  */
 
 import { Dialog, showMessage } from "siyuan";
-import { forwardProxy, parseJsonBody } from "./feishu-api";
+import { forwardProxy, parseJsonBody, trustedFeishuDomain } from "./feishu-api";
 import { FeishuAuth, mergeScopes, missingScopes } from "./feishu-auth";
 import { copyToClipboard } from "./help-dialog";
 
@@ -25,7 +25,7 @@ export interface FeishuAuthDialogDeps {
 
 /** 直接用 user_access_token 拉取用户信息 */
 async function fetchUserInfo(domain: string, accessToken: string): Promise<any> {
-    const url = `${domain}/open-apis/authen/v1/user_info`;
+    const url = `${trustedFeishuDomain(domain)}/open-apis/authen/v1/user_info`;
     const resp = await forwardProxy(url, {
         method: "GET",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -184,13 +184,13 @@ export class FeishuAuthDialog {
         const modeLabel = config.authMode === "user"
             ? this.t("feishuModeUser", "用户身份")
             : this.t("feishuModeTenant", "应用（机器人）身份");
-        let text = `当前访问身份：<b>${modeLabel}</b>`;
+        let text = `当前访问身份：<b>${this.escapeAttr(modeLabel)}</b>`;
         if (config.authMode === "user") {
             if (this.deps.auth.isAuthorized) {
-                text += ` · 已授权${info?.userName ? "：" + info.userName : ""}`;
+                text += ` · 已授权${info?.userName ? "：" + this.escapeAttr(info.userName) : ""}`;
                 const missing = this.missingGrantedScopes();
                 if (missing.length) {
-                    text += ` · <span class="feishu-auth__warn">缺少权限：${missing.join("、")}（请重新授权）</span>`;
+                    text += ` · <span class="feishu-auth__warn">缺少权限：${this.escapeAttr(missing.join("、"))}（请重新授权）</span>`;
                 }
             } else {
                 text += " · <span class=\"feishu-auth__warn\">尚未授权</span>";
