@@ -58,3 +58,23 @@ test('sync form does not interpolate a stored root path into HTML', () => {
     d.options = { rootPath: '"><img src=x onerror=alert(1)>' };
     assert.doesNotMatch(d.buildContent(), /<img|onerror/);
 });
+
+test('loading and saving settings do not log application secrets', async () => {
+    const { SettingUtils } = createLoader({ Setting: class {} })('src/libs/setting-utils.ts');
+    const secret = 'test-secret';
+    const logs = [];
+    const original = console.debug;
+    console.debug = (...args) => logs.push(JSON.stringify(args));
+    try {
+        const stored = [];
+        const settings = new SettingUtils({ plugin: {
+            data: {}, loadData: async () => ({ feishuAppSecret: secret }),
+            saveData: async (_, data) => stored.push(data),
+        } });
+        settings.settings.set('feishuAppSecret', { value: '' });
+        await settings.load();
+        await settings.save();
+        assert.equal(stored[0].feishuAppSecret, secret);
+        assert.ok(logs.every(line => !line.includes(secret)));
+    } finally { console.debug = original; }
+});

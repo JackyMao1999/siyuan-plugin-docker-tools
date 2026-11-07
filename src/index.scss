@@ -100,19 +100,6 @@
     flex-wrap: wrap;
 }
 
-.feishu-sync__row.feishu-sync__options {
-    gap: 16px;
-    color: var(--b3-theme-on-surface);
-    font-size: 13px;
-}
-
-.feishu-sync__row.feishu-sync__options label {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    cursor: pointer;
-}
-
 .feishu-sync__label {
     flex: none;
     font-size: 13px;

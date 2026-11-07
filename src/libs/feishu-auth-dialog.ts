@@ -1,14 +1,16 @@
 /*
- * 飞书用户授权对话框（OAuth 手动回填流程）
+ * 飞书用户授权对话框（自动回调与手动回填）
  */
 
-import { Dialog, showMessage } from "siyuan";
+import { Dialog, showMessage, getFrontend } from "siyuan";
 import { forwardProxy, parseJsonBody, trustedFeishuDomain } from "./feishu-api";
 import { FeishuAuth, mergeScopes, missingScopes } from "./feishu-auth";
+import { browserRedirectUri, createOAuthState, DESKTOP_REDIRECT_URI, FeishuOAuthCallback } from "./feishu-oauth-callback";
 import { copyToClipboard } from "./help-dialog";
 
 export interface FeishuAuthDialogDeps {
     i18n: Record<string, any>;
+    pluginName: string;
     auth: FeishuAuth;
     getConfig: () => {
         domain: string;
@@ -21,6 +23,7 @@ export interface FeishuAuthDialogDeps {
     /** 保存回调地址到插件设置 */
     setRedirectUri?: (value: string) => Promise<void> | void;
     onChanged?: () => void;
+    onAuthorized?: () => void;
 }
 
 /** 直接用 user_access_token 拉取用户信息 */
@@ -29,6 +32,7 @@ async function fetchUserInfo(domain: string, accessToken: string): Promise<any> 
     const resp = await forwardProxy(url, {
         method: "GET",
         headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 10000,
     });
     const body = parseJsonBody(resp, url);
     if (body?.code !== 0) {
@@ -49,13 +53,28 @@ export class FeishuAuthDialog {
     private openBtn: HTMLButtonElement;
     private finishBtn: HTMLButtonElement;
     private revokeBtn: HTMLButtonElement;
+    private callback: FeishuOAuthCallback | null = null;
+    private closed = false;
+    private busy = false;
+
+    private get desktop(): boolean {
+        return ["desktop", "desktop-window"].includes(getFrontend());
+    }
+
+    private get recommendedUri(): string {
+        return this.desktop ? DESKTOP_REDIRECT_URI : browserRedirectUri(this.deps.pluginName);
+    }
+
+    destroy(): void { if (!this.closed) this.dialog.destroy(); }
+
 
     constructor(deps: FeishuAuthDialogDeps) {
         this.deps = deps;
         this.dialog = new Dialog({
             title: this.t("feishuAuthTitle", "飞书用户授权"),
             width: "680px",
-            height: "600px",
+            height: "680px",
+            destroyCallback: () => { this.closed = true; this.callback?.stop(); },
             content: this.buildContent(),
         });
 
@@ -70,7 +89,7 @@ export class FeishuAuthDialog {
         this.finishBtn = root.querySelector("#feishu-auth-finish") as HTMLButtonElement;
         this.revokeBtn = root.querySelector("#feishu-auth-revoke") as HTMLButtonElement;
 
-        this.openBtn.onclick = () => this.handleOpenAuthorize();
+        this.openBtn.onclick = () => { void this.handleOpenAuthorize(); };
         this.finishBtn.onclick = () => {
             void this.handleFinish();
         };
@@ -103,11 +122,11 @@ export class FeishuAuthDialog {
     <div class="feishu-auth__status" id="feishu-auth-status"></div>
     <div class="feishu-auth__alert" id="feishu-auth-alert"></div>
     <div class="feishu-auth__steps">
-        <b>开始前请先完成「重定向 URL」配置，否则授权页会报 20029 错误。</b>
+        <b>首次使用时配置一次「重定向 URL」即可；地址不变时无需重复配置。</b>
         <ol>
             <li>点 <b>打开后台配置页</b> → 开发配置 → <b>安全设置</b> → <b>重定向 URL</b> → 添加下方地址并保存/发布。</li>
             <li>确认插件里填的 <b>App ID</b> 就是配置了该地址的那个应用（配置在别的应用上也会报 20029）。</li>
-            <li>点 <b>① 打开授权页面</b> → 同意授权 → 复制浏览器<b>地址栏完整网址</b> → 粘回下方 → <b>③ 完成授权</b>。</li>
+            <li>点 <b>① 打开授权页面</b> → 同意授权 → 自动完成令牌交换。请保持此对话框打开。</li>
         </ol>
     </div>
     <div class="feishu-auth__row">
@@ -117,7 +136,7 @@ export class FeishuAuthDialog {
     </div>
     <div class="feishu-auth__row">
         <button id="feishu-auth-console" class="b3-button b3-button--outline">打开后台配置页</button>
-        <button id="feishu-auth-current" class="b3-button b3-button--outline">使用当前思源地址</button>
+        <button id="feishu-auth-current" class="b3-button b3-button--outline">使用推荐回调地址</button>
     </div>
     <div class="feishu-auth__row">
         <span class="feishu-auth__label">授权范围</span>
@@ -127,10 +146,10 @@ export class FeishuAuthDialog {
         <button id="feishu-auth-open" class="b3-button b3-button--text">① 打开授权页面</button>
     </div>
     <div class="feishu-auth__row">
-        <input id="feishu-auth-code" class="b3-text-field fn__flex-1" placeholder="② 粘贴回调网址或授权码 code">
+        <input id="feishu-auth-code" class="b3-text-field fn__flex-1" placeholder="自动回传失败时，可粘贴本次授权的完整回调网址">
     </div>
     <div class="feishu-auth__row">
-        <button id="feishu-auth-finish" class="b3-button b3-button--text">③ 完成授权</button>
+        <button id="feishu-auth-finish" class="b3-button b3-button--text">手动完成授权</button>
         <span class="fn__space"></span>
         <button id="feishu-auth-revoke" class="b3-button b3-button--outline">退出授权</button>
     </div>
@@ -160,7 +179,9 @@ export class FeishuAuthDialog {
     private async init() {
         // 老授权记录可能缺少后续新增的权限（如 board:whiteboard:node:read），
         // 这里把「已授权」与「插件所需」取并集，重新授权时一并申请
-        this.scopeInput.value = mergeScopes(this.deps.auth.info?.scope, this.deps.getConfig().scope);
+        this.scopeInput.value = mergeScopes(this.deps.auth.info?.scope, this.deps.getConfig().scope)
+            .split(" ").filter(scope => scope !== "offline_access").join(" ");
+        // The client-specific callback is persisted by the plugin. Opening this dialog must not rewrite it.
         this.renderStatus();
         this.renderChecklist();
 
@@ -170,12 +191,6 @@ export class FeishuAuthDialog {
             this.appendLog("点「① 打开授权页面」重新授权即可（授权范围已自动补全），否则相关接口会报 99991679。");
         }
 
-        // 若当前就是浏览器前端且地址栏里带了 code，自动填入
-        const href = window.location.href;
-        if (/[?&#]code=/.test(href)) {
-            this.codeInput.value = href;
-            this.appendLog("检测到当前地址包含授权码，已自动填入，可直接点击「完成授权」。");
-        }
     }
 
     private renderStatus() {
@@ -248,85 +263,115 @@ export class FeishuAuthDialog {
     }
 
     private async handleUseCurrentOrigin() {
-        const origin = window.location.origin && window.location.origin !== "null" ? window.location.origin : "";
-        if (!origin) {
-            showMessage("无法获取当前思源地址，请手动填写", 4000, "error");
-            return;
-        }
-        this.redirectInput.value = `${origin}/`;
+        this.redirectInput.value = this.recommendedUri;
         await this.saveRedirectUri();
-        this.appendLog(`已填入当前思源地址：${origin}/（请同样把它加到飞书后台的重定向 URL）`);
+        this.appendLog(`已填入推荐回调地址：${this.recommendedUri}（若飞书后台尚未登记此地址，请添加一次；已登记则无需修改）`);
     }
 
-    private handleOpenAuthorize() {
+    private setBusy(value: boolean) {
+        this.busy = value;
+        this.openBtn.disabled = value;
+        this.finishBtn.disabled = value;
+        this.revokeBtn.disabled = value || !this.deps.auth.isAuthorized;
+        this.redirectInput.disabled = value;
+        this.scopeInput.disabled = value;
+    }
+
+    private reportError(message: string) {
+        if (this.closed) return;
+        this.appendLog(message);
+        showMessage(message, 6000, "error");
+        this.setBusy(false);
+    }
+
+    private async handleOpenAuthorize() {
+        if (this.busy) return;
         const config = this.deps.getConfig();
-        if (!config.appId || !config.appSecret) {
-            showMessage(this.t("feishuNotConfigured", "请先填写飞书 App ID 与 App Secret"), 4000, "error");
-            return;
-        }
         const redirectUri = this.redirectInput.value.trim();
         const warning = FeishuAuth.validateRedirectUri(redirectUri);
-        if (warning) {
-            this.renderChecklist();
-            showMessage(warning, 5000, "error");
+        if (warning || !config.appId || !config.appSecret) {
+            this.reportError(warning || "请先填写飞书 App ID 与 App Secret");
             return;
         }
-        void this.saveRedirectUri();
-
-        const scope = this.scopeInput.value.trim() || config.scope;
-        const url = this.deps.auth.buildAuthorizeUrl(config.domain, config.appId, redirectUri, scope);
-        this.appendLog("已打开授权页面。若授权页提示 20029（重定向 URL 有误）：");
-        this.appendLog(`请到「开发配置 → 安全设置 → 重定向 URL」添加：${redirectUri}`);
-        this.appendLog("并确认 App ID 与配置该地址的应用一致，然后重新打开授权页。");
-        window.open(url, "_blank");
+        // Reserve a browser tab while still inside the click gesture (before awaiting setup).
+        const popup = this.desktop ? null : window.open("about:blank", "_blank");
+        if (!this.desktop && !popup) {
+            this.reportError("浏览器阻止了授权窗口，请允许此站点打开弹窗后重试");
+            return;
+        }
+        this.callback?.stop();
+        this.setBusy(true);
+        try {
+            const scope = this.scopeInput.value.trim() || config.scope;
+            const state = createOAuthState();
+            const url = this.deps.auth.buildAuthorizeUrl(config.domain, config.appId, redirectUri, scope, state);
+            const callback = new FeishuOAuthCallback(redirectUri, state, async code => {
+                const current = this.deps.getConfig();
+                if (current.appId !== config.appId || current.appSecret !== config.appSecret || current.domain !== config.domain) {
+                    throw new Error("应用配置已改变，请重新授权");
+                }
+                this.setBusy(true);
+                await this.exchangeCode(code, { ...config, redirectUri, scope });
+            }, message => this.reportError(message));
+            this.callback = callback;
+            await callback.start(this.desktop, this.desktop ? "" : browserRedirectUri(this.deps.pluginName));
+            await this.saveRedirectUri();
+            if (this.closed) { callback.stop(); popup?.close(); return; }
+            if (popup) {
+                // Callback delivery uses BroadcastChannel and does not need window.opener.
+                popup.opener = null;
+                popup.location.replace(url);
+            } else {
+                const nodeRequire = (window as any).require;
+                await nodeRequire("electron").shell.openExternal(url);
+            }
+            this.appendLog("已打开授权页面，同意授权后将自动交换并保存令牌。请保持此对话框打开。");
+            this.setBusy(false);
+        } catch (e) {
+            this.callback?.stop();
+            popup?.close();
+            this.reportError(e instanceof Error ? e.message : "无法打开授权页面");
+        }
     }
 
     private async handleFinish() {
-        const config = this.deps.getConfig();
-        if (!config.appId || !config.appSecret) {
-            showMessage(this.t("feishuNotConfigured", "请先填写飞书 App ID 与 App Secret"), 4000, "error");
+        if (this.busy) return;
+        if (!this.callback || !/^https?:\/\//i.test(this.codeInput.value.trim())) {
+            this.reportError("请先打开授权页面，再粘贴本次授权的完整回调网址（包含 code 和 state）");
             return;
         }
-        const code = FeishuAuth.extractCode(this.codeInput.value);
-        if (!code) {
-            showMessage("未能从粘贴内容中解析出授权码，请复制浏览器地址栏的完整网址", 5000, "error");
-            return;
-        }
-        this.finishBtn.disabled = true;
-        this.appendLog("正在用授权码换取 user_access_token...");
         try {
-            const scope = this.scopeInput.value.trim() || config.scope;
-            const redirectUri = this.redirectInput.value.trim() || config.redirectUri;
-            await this.deps.auth.exchangeCode(
-                config.domain,
-                config.appId,
-                config.appSecret,
-                code,
-                redirectUri,
-                scope
-            );
-            this.appendLog("授权成功。");
-            try {
-                const info = await fetchUserInfo(config.domain, this.deps.auth.info!.accessToken);
-                await this.deps.auth.saveUserInfo(info?.name || "", info?.open_id || "");
-                this.appendLog(`已授权用户：${info?.name || "(未知)"}`);
-            } catch (e) {
-                this.appendLog(`获取用户信息失败（不影响同步）：${e instanceof Error ? e.message : e}`);
-            }
+            await this.callback.complete(this.codeInput.value.trim());
             this.codeInput.value = "";
-            this.renderStatus();
-            this.deps.onChanged?.();
-            showMessage("飞书用户授权成功", 4000);
         } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            this.appendLog(`授权失败：${message}`);
-            showMessage(`授权失败：${message}`, 6000, "error");
-        } finally {
-            this.finishBtn.disabled = false;
+            this.reportError(e instanceof Error ? e.message : "授权失败，请重新授权");
         }
     }
 
+    private async exchangeCode(code: string, config: ReturnType<FeishuAuthDialogDeps["getConfig"]>) {
+        this.appendLog("正在自动交换授权令牌...");
+        await this.deps.auth.exchangeCode(config.domain, config.appId, config.appSecret, code, config.redirectUri, config.scope);
+        try {
+            const info = await fetchUserInfo(config.domain, this.deps.auth.info!.accessToken);
+            await this.deps.auth.saveUserInfo(info?.name || "", info?.open_id || "");
+        } catch {
+            this.appendLog("未获取到用户显示名，不影响同步。");
+        }
+        if (this.closed) return;
+        this.appendLog("授权成功，令牌已保存。");
+        if (!this.deps.auth.info?.refreshToken) this.appendLog("本次未取得刷新令牌，访问令牌到期后需重新授权。");
+        this.setBusy(false);
+        this.renderStatus();
+        this.deps.onChanged?.();
+        showMessage("飞书用户授权成功", 4000);
+        this.deps.onAuthorized?.();
+    }
+
     private async handleRevoke() {
+        if (this.busy) return;
+        this.callback?.stop();
+        this.callback = null;
+        this.codeInput.value = "";
         await this.deps.auth.clear();
         this.appendLog("已退出授权。");
         this.renderStatus();

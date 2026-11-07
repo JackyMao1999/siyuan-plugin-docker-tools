@@ -4,22 +4,20 @@
  * 说明：
  *  - 应用（tenant_access_token）身份只能看到「被授权给应用」的知识库/文档；
  *    用户（user_access_token）身份则可以看到「当前用户自己」的云文档与知识库。
- *  - 插件无法接收 HTTP 回调，因此采用「手动回填」方式：
- *    打开授权页 → 授权后浏览器跳转到回调地址（页面打不开没关系）
- *    → 把地址栏里的完整回调地址（含 code）粘回来即可。
+ *  - 桌面端通过本机监听、浏览器端通过回调页面自动接收授权结果。
  */
 
 import { FeishuClient, forwardProxy, parseJsonBody, trustedFeishuDomain } from "./feishu-api";
 
 /**
- * 用户授权默认申请的权限（offline_access 用于获取 refresh_token）
+ * 用户授权默认申请的权限（offline_access 可由用户手动添加以获取 refresh_token）
  *
  * 注意：`board:whiteboard:node:read` 用于把文档里的画板 / mermaid 图导出为图片，
  * 是后续新增的权限。用户身份下「应用已开通」还不够，必须由用户重新授权带上该 scope，
  * 否则调用画板接口会报 99991679（请重新授权）。
  */
 export const DEFAULT_USER_SCOPE =
-    "wiki:wiki:readonly docx:document:readonly drive:drive:readonly board:whiteboard:node:read offline_access";
+    "wiki:wiki:readonly docx:document:readonly drive:drive:readonly board:whiteboard:node:read";
 
 /** 合并多组空格分隔的 scope（去重、保持先后顺序） */
 export function mergeScopes(...groups: (string | undefined | null)[]): string {
@@ -93,7 +91,7 @@ export class FeishuAuth {
     }
 
     /** 生成授权链接。redirectUri 需与飞书后台「安全设置」中配置的回调地址一致 */
-    buildAuthorizeUrl(domain: string, appId: string, redirectUri: string, scope: string): string {
+    buildAuthorizeUrl(domain: string, appId: string, redirectUri: string, scope: string, state: string): string {
         const base = `${FeishuClient.accountsDomain(domain)}/open-apis/authen/v1/authorize`;
         // 手动拼接查询串：用 %20 表示空格（比 URLSearchParams 的 + 更稳妥）
         const query = [
@@ -101,7 +99,7 @@ export class FeishuAuth {
             ["response_type", "code"],
             ["redirect_uri", redirectUri],
             ["scope", scope],
-            ["state", Math.random().toString(36).slice(2)],
+            ["state", state],
             ["prompt", "consent"],
         ]
             .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
@@ -202,7 +200,8 @@ export class FeishuAuth {
             throw new Error("检测到应用已更换，请重新进行飞书用户授权");
         }
         // 提前 5 分钟刷新
-        if (Date.now() > this.tokens.accessExpire - 5 * 60 * 1000) {
+        const refreshAhead = this.tokens.refreshToken ? 5 * 60 * 1000 : 0;
+        if (Date.now() >= this.tokens.accessExpire - refreshAhead) {
             const ok = await this.refresh(domain, appId, appSecret);
             if (!ok) {
                 throw new Error("飞书用户授权已过期且无法自动刷新，请重新授权");

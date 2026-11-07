@@ -2,7 +2,7 @@
  * 飞书知识库同步对话框
  */
 
-import { Dialog, confirm, showMessage } from "siyuan";
+import { Dialog, showMessage } from "siyuan";
 import { FeishuClient, FeishuDriveFile, FeishuWikiNode, FeishuWikiSearchHit } from "./feishu-api";
 import {
     DEFAULT_SYNC_OPTIONS,
@@ -110,8 +110,10 @@ export interface FeishuSyncDialogDeps {
     isUserMode?: () => boolean;
     /** 用户身份下当前授权记录缺失的权限（用于提前提示重新授权） */
     getMissingScopes?: () => string[];
+    /** 当前应用是否已有用户授权 */
+    isAuthorized?: () => boolean;
     /** 打开用户授权对话框 */
-    openAuth?: () => void;
+    openAuth?: (onAuthorized?: () => void) => void;
 }
 
 /** 当前是否处于同步中 */
@@ -136,10 +138,6 @@ export class FeishuSyncDialog {
     private linkBtn: HTMLButtonElement;
     private linkRow: HTMLElement;
     private linkHintEl: HTMLElement;
-    private recursiveInput: HTMLInputElement;
-    private assetsInput: HTMLInputElement;
-    private incrementalInput: HTMLInputElement;
-    private sourceNoteInput: HTMLInputElement;
     private options: FeishuSyncOptions;
     private searchRow: HTMLElement;
     private searchInput: HTMLInputElement;
@@ -186,10 +184,6 @@ export class FeishuSyncDialog {
         this.linkBtn = root.querySelector("#feishu-link-btn") as HTMLButtonElement;
         this.linkRow = root.querySelector("#feishu-link-row") as HTMLElement;
         this.linkHintEl = root.querySelector("#feishu-link-hint") as HTMLElement;
-        this.recursiveInput = root.querySelector("#feishu-recursive") as HTMLInputElement;
-        this.assetsInput = root.querySelector("#feishu-assets") as HTMLInputElement;
-        this.incrementalInput = root.querySelector("#feishu-incremental") as HTMLInputElement;
-        this.sourceNoteInput = root.querySelector("#feishu-source-note") as HTMLInputElement;
 
         this.bindEvents();
         this.init().catch((e) => {
@@ -246,18 +240,11 @@ export class FeishuSyncDialog {
             <span class="feishu-sync__label">${this.t("feishuRootPath", "根路径")}</span>
             <input id="feishu-rootpath" class="b3-text-field fn__size200">
         </div>
-        <div class="feishu-sync__row feishu-sync__options">
-            <label><input type="checkbox" id="feishu-recursive"> ${this.t("feishuRecursive", "递归子文档")}</label>
-            <label><input type="checkbox" id="feishu-assets"> ${this.t("feishuAssets", "同步图片/附件/画板")}</label>
-            <label><input type="checkbox" id="feishu-incremental"> ${this.t("feishuIncremental", "增量同步")}</label>
-            <label><input type="checkbox" id="feishu-source-note"> ${this.t("feishuAddSource", "添加来源")}</label>
-        </div>
     </div>
     <div class="feishu-sync__tree" id="feishu-tree"></div>
     <div class="feishu-sync__log" id="feishu-log"></div>
     <div class="feishu-sync__footer">
-        <button id="feishu-auth-btn" class="b3-button b3-button--outline">${this.t("feishuAuthMenu", "用户授权")}</button>
-        <button id="feishu-reset-btn" class="b3-button b3-button--outline">${this.t("feishuResetRecords", "重置同步记录")}</button>
+        ${this.deps.isAuthorized?.() ? "" : `<button id="feishu-auth-btn" class="b3-button b3-button--outline">${this.t("feishuAuthMenu", "用户授权")}</button>`}
         <span class="fn__space"></span>
         <button id="feishu-sync-btn" class="b3-button b3-button--text">${this.t("feishuStartSync", "开始同步")}</button>
     </div>
@@ -300,33 +287,15 @@ export class FeishuSyncDialog {
         this.syncBtn.onclick = () => {
             void this.handleSync();
         };
-        (this.dialog.element.querySelector("#feishu-auth-btn") as HTMLElement).onclick = () => {
-            this.deps.openAuth?.();
+        const authButton = this.dialog.element.querySelector("#feishu-auth-btn") as HTMLElement;
+        if (authButton) authButton.onclick = () => {
+            this.deps.openAuth?.(() => {
+                if (!this.destroyed) authButton.classList.toggle("fn__none", !!this.deps.isAuthorized?.());
+            });
         };
-        (this.dialog.element.querySelector("#feishu-reset-btn") as HTMLElement).onclick = () => {
-            confirm(
-                this.t("feishuResetRecords", "重置同步记录"),
-                this.t("feishuResetRecordsConfirm", "重置后将忽略历史记录，下次同步会按「全新文档」处理（同路径的已有文档会被覆盖，不会重复创建）。确定继续？"),
-                () => {
-                    void (async () => {
-                        await this.deps.sync.clearRecords();
-                        this.appendLog("已重置同步记录，下次同步将按全新文档处理。");
-                        showMessage("已重置同步记录", 3000);
-                    })();
-                }
-            );
-        };
-        this.recursiveInput.onchange = () => this.collectOptions();
-        this.assetsInput.onchange = () => this.collectOptions();
-        this.incrementalInput.onchange = () => this.collectOptions();
-        this.sourceNoteInput.onchange = () => this.collectOptions();
     }
 
     private async init() {
-        this.recursiveInput.checked = this.options.recursive;
-        this.assetsInput.checked = this.options.syncAssets;
-        this.incrementalInput.checked = this.options.incremental;
-        this.sourceNoteInput.checked = this.options.addSource;
 
         this.driveHintEl.textContent = this.t(
             "feishuDriveHint",
@@ -426,10 +395,10 @@ export class FeishuSyncDialog {
         this.linkRow.classList.toggle("fn__none", !isLink);
         this.linkHintEl.classList.toggle("fn__none", !isLink);
         this.searchRow.classList.toggle("fn__none", source !== "wiki-discovery");
-        this.sourceHintEl.classList.toggle("fn__none", source !== "wiki-discovery" && source !== "my-library");
+        this.sourceHintEl.classList.toggle("fn__none", source !== "my-library");
         this.sourceHintEl.textContent = source === "my-library"
             ? this.t("feishuMyLibraryHint", "使用用户身份读取「我的文档库」页面树；它与云盘「我的空间」是不同的来源。")
-            : this.t("feishuWikiDiscoveryHint", "使用用户身份发现可访问页面，按所属空间分组。结果不保证完整，可用关键词或指定链接补充；勾选分组只同步已发现页面及所选递归范围，不代表整个空间。");
+            : "";
     }
 
     private async loadTree() {
@@ -571,6 +540,7 @@ export class FeishuSyncDialog {
         meta.badge = hit.obj_type.toUpperCase();
         meta.loader = async () => {
             const resolved = await this.resolveSearchMeta(meta);
+            meta.expandable = resolved.expandable;
             return resolved.loader ? resolved.loader() : [];
         };
         return meta;
@@ -744,7 +714,8 @@ export class FeishuSyncDialog {
 
         const icon = document.createElement("span");
         icon.className = "feishu-sync__icon";
-        icon.textContent = meta.expandable ? "📁" : "📄";
+        const isContainer = ["space", "wiki-results", "drive-root", "drive-folder"].includes(meta.kind);
+        icon.textContent = isContainer ? "📁" : "📄";
         node.appendChild(icon);
 
         const title = document.createElement("span");
@@ -794,6 +765,12 @@ export class FeishuSyncDialog {
                 try {
                     const childMetas = (await meta.loader?.()) || [];
                     children.innerHTML = "";
+                    if (!meta.expandable) {
+                        toggle.textContent = "";
+                        children.classList.add("fn__none");
+                        checkbox.dataset.meta = JSON.stringify({ ...JSON.parse(checkbox.dataset.meta), expandable: false });
+                        return;
+                    }
                     if (!childMetas.length) {
                         children.innerHTML = `<div class="feishu-sync__empty">（空）</div>`;
                     }
@@ -834,12 +811,13 @@ export class FeishuSyncDialog {
     }
 
     private collectOptions() {
-        this.options.recursive = this.recursiveInput.checked;
-        this.options.syncAssets = this.assetsInput.checked;
-        this.options.incremental = this.incrementalInput.checked;
-        this.options.addSource = this.sourceNoteInput.checked;
-        this.options.notebook = this.notebookSelect.value;
-        this.options.rootPath = this.rootPathInput.value.trim() || DEFAULT_SYNC_OPTIONS.rootPath;
+        // Read the current settings at sync time, including changes made while this window was open.
+        this.options = {
+            ...DEFAULT_SYNC_OPTIONS,
+            ...this.deps.getOptions(),
+            notebook: this.notebookSelect.value,
+            rootPath: this.rootPathInput.value.trim() || DEFAULT_SYNC_OPTIONS.rootPath,
+        };
     }
 
     /** 收集勾选的文档（含容器递归） */

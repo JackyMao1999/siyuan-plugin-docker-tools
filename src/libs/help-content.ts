@@ -21,7 +21,6 @@ const USER_SCOPES = [
     "docx:document:readonly",
     "drive:drive:readonly",
     "board:whiteboard:node:read",
-    "offline_access",
 ].join(" ");
 
 const LINK_STYLE = 'style="color:var(--b3-theme-primary);text-decoration:underline;"';
@@ -92,9 +91,10 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <tbody>
 <tr><td><code>wiki:wiki:readonly</code><br><code>docx:document:readonly</code><br><code>drive:drive:readonly</code></td><td>与「机器人权限」里对应的三项用途相同，只是改为用<b>你的身份</b>去读你自己的云文档与知识库</td></tr>
 <tr><td><code>board:whiteboard:node:read</code></td><td>画板 / mermaid 导出为图片（同样需要后台已申请并发布该权限）</td></tr>
-<tr><td><code>offline_access</code></td><td>获取 refresh_token，用来自动续期，省得反复授权</td></tr>
+
 </tbody>
 </table>
+<p><code>offline_access</code> 为可选权限，默认不申请。需要自动续期时，先在飞书后台开通，再在授权范围中手动添加。未取得刷新令牌时，访问令牌到期后需要重新授权；修改默认范围不会撤销历史授权。</p>
 <p>⚠️ 三个容易踩的点：</p>
 <ul>
 <li><b>后台先申请，授权页才勾得动</b>：没申请就带着该 scope 去授权 → <code>20027 应用未申请该权限</code>。</li>
@@ -151,6 +151,7 @@ export function getFeishuHelpTopics(): HelpTopic[] {
             keywords: "同步 操作 选项 说明 来源 知识库 云文档 空间 目标笔记本 根路径 递归 图片 附件 增量 来源信息 勾选",
             html: `
 <p>点击顶栏插件图标 → <b>飞书知识库同步</b>（快捷键 <code>Ctrl+Alt+F</code>）。</p>
+<p>「递归子文档」「同步图片 / 附件 / 画板」「增量同步」「添加来源」在<b>插件设置 → 飞书知识库同步</b>中调整，默认均开启。</p>
 <table class="plugin-help__table">
 <thead><tr><th>选项</th><th>说明</th></tr></thead>
 <tbody>
@@ -207,8 +208,8 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <dd>插件默认按「飞书编辑时间」判断是否需要更新，删除思源文档不会改变飞书记录。现在已修复：<b>跳过前会先校验思源文档是否还存在</b>，
 被删掉的会自动重新创建。你也可以用两种方式强制重来：
 <ul>
-<li>取消勾选「增量同步」→ 本次全部按最新内容重写；</li>
-<li>点对话框右下角的 <b>「重置同步记录」</b> → 清空历史记录，之后按全新文档处理（同路径已有文档会被覆盖，不会重复创建）。</li>
+<li>在插件设置中取消勾选「增量同步」→ 全部按最新内容重写；</li>
+<li>重复选择已有文档时会更新原文档，不会创建副本；关闭「增量同步」即可强制覆盖未变化的文档。</li>
 </ul></dd>
 
 <dt>同步后内容不全 / 少了一部分</dt>
@@ -269,7 +270,7 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <p>要读取<b>你自己</b>的云文档和你有权限的知识库，需要切换到 <b>用户身份</b>（OAuth 授权）：</p>
 <ol>
 <li>飞书开发者后台 → 你的应用 → <b>开发配置 → 安全设置 → 重定向 URL</b>，
-添加一个地址，例如 <code>http://localhost:8080/feishu-callback</code>（这个地址不需要真的能打开）。
+添加授权对话框中「使用推荐回调地址」生成的地址。桌面版使用本机回调，浏览器版使用当前思源站点的插件回调页；两个地址可以同时登记。
 <br>更省事的做法：在授权对话框里点 <b>「打开后台配置页」</b> 直达该页面，点 <b>「复制」</b> 把地址复制过去。</li>
 <li>确认应用已申请 <code>wiki:wiki:readonly</code>、<code>docx:document:readonly</code>、<code>drive:drive:readonly</code>
 并已发布版本（用户身份同样要先在后台申请这些权限，详见第 ③ 步）：
@@ -279,8 +280,8 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <li>思源插件设置中：<b>飞书访问身份</b> 改为「用户身份」；
 <b>授权回调地址</b> 填第 1 步配置的那个地址（必须<b>完全一致</b>）。</li>
 <li>点击设置中的 <b>打开授权 / 授权管理</b> → 点「① 打开授权页面」在浏览器登录并同意授权。</li>
-<li>授权后浏览器会跳转到一个打不开的页面（正常现象），复制<b>地址栏里的完整网址</b>（含 <code>code=</code>），
-粘贴回对话框 → 点「③ 完成授权」。</li>
+<li>保持思源授权对话框打开，同意授权后会自动交换并保存令牌。浏览器版需在同一浏览器打开授权页并允许弹窗；桌面版需保持回调端口可用。
+如需手动回填，请粘贴本次授权的完整回调网址（含 <code>code</code> 和 <code>state</code>），点「手动完成授权」。</li>
 </ol>
 <p>授权成功后，同步对话框顶部会显示「用户身份（你的名字）」，此时「我的空间」就是你自己的云文档了。</p>
 <dl class="plugin-help__faq">
@@ -300,7 +301,7 @@ export function getFeishuHelpTopics(): HelpTopic[] {
 <dt>报错 invalid_grant / 授权码无效</dt>
 <dd>授权码有效期只有 5 分钟且只能用一次，请重新点「打开授权页面」再走一遍。</dd>
 <dt>换了应用或授权过期</dt>
-<dd>更换 App ID 后需要重新授权；授权过期会自动用 refresh_token 续期，续期失败时重新走一次授权即可。</dd>
+<dd>更换 App ID 后需要重新授权；只有取得 refresh_token 才能自动续期；默认不申请 offline_access，未取得刷新令牌或续期失败时需重新授权。</dd>
 </dl>`,
         },
     ];

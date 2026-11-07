@@ -18,13 +18,19 @@ import { BookmarkSyncDialog } from "./libs/bookmark-dialog";
 import { openHelpDialog } from "./libs/help-dialog";
 import { getBookmarkHelpTopics, getExportHelpTopics, getFeishuHelpTopics } from "./libs/help-content";
 import { DEFAULT_USER_SCOPE, FeishuAuth, missingScopes } from "./libs/feishu-auth";
+import { browserRedirectUri, DESKTOP_REDIRECT_URI, migrateDesktopRedirectUri } from "./libs/feishu-oauth-callback";
 import { FeishuAuthDialog } from "./libs/feishu-auth-dialog";
 
 const STORAGE_NAME = "doc-export-config";
 const FEISHU_CONFIG_FILE = "feishu-sync-config.json";
 const FEISHU_AUTH_FILE = "feishu-auth.json";
 const BOOKMARK_CONFIG_FILE = "bookmark-sync-config.json";
-const DEFAULT_REDIRECT_URI = "http://localhost:8080/feishu-callback";
+const FEISHU_OPTION_SETTINGS = [
+    ["recursive", "feishuRecursive"],
+    ["syncAssets", "feishuAssets"],
+    ["incremental", "feishuIncremental"],
+    ["addSource", "feishuAddSource"],
+] as const;
 
 export default class DocExportPlugin extends Plugin {
 
@@ -33,6 +39,7 @@ export default class DocExportPlugin extends Plugin {
     private feishuClient: FeishuClient;
     private feishuSync: FeishuSync;
     private feishuAuth: FeishuAuth;
+    private feishuAuthDialog?: FeishuAuthDialog;
     private feishuOptions: FeishuSyncOptions = { ...DEFAULT_SYNC_OPTIONS };
     private bookmarkSync: BookmarkSync;
     private bookmarkOptions: BookmarkSyncOptions = { ...DEFAULT_BOOKMARK_OPTIONS };
@@ -87,7 +94,18 @@ export default class DocExportPlugin extends Plugin {
             this.initSettings();
 
             try {
-                await this.settingUtils.load();
+                const saved = await this.settingUtils.load();
+                // Migrate the old shared URL once; each client now keeps its own address.
+                let changed = false;
+                if (!saved?.feishuDesktopRedirectUri) {
+                    this.settingUtils.set("feishuDesktopRedirectUri", migrateDesktopRedirectUri(saved?.feishuRedirectUri || "", window.location.origin));
+                    changed = true;
+                }
+                if (!saved?.feishuBrowserRedirectUri && !this.isDesktopFeishuClient()) {
+                    this.settingUtils.set("feishuBrowserRedirectUri", browserRedirectUri(this.name));
+                    changed = true;
+                }
+                if (changed) await this.settingUtils.save();
             } catch (error) {
                 console.error("Error loading settings:", error);
             }
@@ -184,6 +202,7 @@ export default class DocExportPlugin extends Plugin {
     }
 
     async onunload() {
+        this.feishuAuthDialog?.destroy();
         console.log(this.i18n.byePlugin);
     }
 
@@ -366,6 +385,17 @@ export default class DocExportPlugin extends Plugin {
 
         this.settingUtils.useGroup("feishu");
 
+        for (const [option, key] of FEISHU_OPTION_SETTINGS) {
+            this.settingUtils.addItem({
+                key,
+                value: DEFAULT_SYNC_OPTIONS[option],
+                type: "checkbox",
+                title: this.i18n[key],
+                description: "",
+                action: { callback: () => this.settingUtils.takeAndSave(key) },
+            });
+        }
+
         this.settingUtils.addItem({
             key: "feishuBoardWidth",
             value: DEFAULT_SYNC_OPTIONS.boardImageWidth,
@@ -440,12 +470,20 @@ export default class DocExportPlugin extends Plugin {
         });
 
         this.settingUtils.addItem({
-            key: "feishuRedirectUri",
-            value: DEFAULT_REDIRECT_URI,
+            key: "feishuDesktopRedirectUri",
+            value: DESKTOP_REDIRECT_URI,
             type: "textinput",
-            title: this.i18n.feishuRedirectUri,
-            description: this.i18n.feishuRedirectUriDesc,
-            action: { callback: () => this.settingUtils.takeAndSave("feishuRedirectUri") }
+            title: "桌面版授权回调地址",
+            description: "独立保存，重启不变。默认 http://127.0.0.1:18879/feishu-callback，在飞书后台登记一次即可。",
+            action: { callback: () => this.settingUtils.takeAndSave("feishuDesktopRedirectUri") }
+        });
+        this.settingUtils.addItem({
+            key: "feishuBrowserRedirectUri",
+            value: "",
+            type: "textinput",
+            title: "浏览器版授权回调地址",
+            description: "首次使用浏览器版时生成并保存，不覆盖桌面版地址。请使用固定的思源访问域名和端口；站点地址变化时才需要更新此项及飞书后台。",
+            action: { callback: () => this.settingUtils.takeAndSave("feishuBrowserRedirectUri") }
         });
 
         this.settingUtils.addItem({
@@ -495,7 +533,20 @@ export default class DocExportPlugin extends Plugin {
     }
 
     private getFeishuRedirectUri(): string {
-        return ((this.settingUtils?.get("feishuRedirectUri") as string) || "").trim() || DEFAULT_REDIRECT_URI;
+        return ((this.settingUtils?.get(this.feishuRedirectSettingKey()) as string) || "").trim() || this.defaultFeishuRedirectUri();
+    }
+
+    private isDesktopFeishuClient(): boolean {
+        return ["desktop", "desktop-window"].includes(getFrontend());
+    }
+
+    private feishuRedirectSettingKey(): string {
+        return this.isDesktopFeishuClient() ? "feishuDesktopRedirectUri" : "feishuBrowserRedirectUri";
+    }
+
+    private defaultFeishuRedirectUri(): string {
+        return this.isDesktopFeishuClient()
+            ? DESKTOP_REDIRECT_URI : browserRedirectUri(this.name);
     }
 
     private getFeishuAuthConfig() {
@@ -541,21 +592,27 @@ export default class DocExportPlugin extends Plugin {
     }
 
     /** 打开飞书用户授权对话框 */
-    private openFeishuAuth() {
+    private openFeishuAuth(afterAuthorize?: () => void) {
         const credentials = this.getFeishuCredentials();
         if (!credentials.appId || !credentials.appSecret) {
             showMessage(this.i18n.feishuNotConfigured, 5000, "error");
             this.openSetting();
             return;
         }
-        new FeishuAuthDialog({
+        this.feishuAuthDialog?.destroy();
+        this.feishuAuthDialog = new FeishuAuthDialog({
+            pluginName: this.name,
             i18n: this.i18n as any,
             auth: this.feishuAuth,
             getConfig: () => this.getFeishuAuthConfig(),
             setRedirectUri: async (value: string) => {
-                await this.settingUtils.setAndSave("feishuRedirectUri", value);
+                await this.settingUtils.setAndSave(this.feishuRedirectSettingKey(), value);
             },
             onChanged: () => this.refreshFeishuCredentials(),
+            onAuthorized: afterAuthorize ? () => {
+                this.feishuAuthDialog?.destroy();
+                afterAuthorize();
+            } : undefined,
         });
     }
 
@@ -572,6 +629,10 @@ export default class DocExportPlugin extends Plugin {
 
     private saveFeishuOptions = async (options: FeishuSyncOptions) => {
         this.feishuOptions = { ...options };
+        for (const [option, key] of FEISHU_OPTION_SETTINGS) {
+            this.settingUtils.set(key, options[option]);
+        }
+        await this.settingUtils.save();
         await this.saveData(FEISHU_CONFIG_FILE, this.feishuOptions);
     }
 
@@ -617,13 +678,29 @@ export default class DocExportPlugin extends Plugin {
         );
     }
 
+    private getFeishuSyncOptions(): FeishuSyncOptions {
+        const options = { ...this.feishuOptions, boardImageWidth: this.getBoardImageWidth() };
+        for (const [option, key] of FEISHU_OPTION_SETTINGS) {
+            options[option] = this.settingUtils.get(key) ?? DEFAULT_SYNC_OPTIONS[option];
+        }
+        return options;
+    }
+
     /** 打开飞书知识库同步对话框 */
-    private openFeishuSync() {
+    private async openFeishuSync() {
         const credentials = this.getFeishuCredentials();
         if (!credentials.appId || !credentials.appSecret) {
             showMessage(this.i18n.feishuNotConfigured, 5000, "error");
             this.openSetting();
             return;
+        }
+        if (credentials.authMode === "user") {
+            try {
+                await this.feishuAuth.ensureAccessToken(credentials.domain, credentials.appId, credentials.appSecret);
+            } catch {
+                this.openFeishuAuth(() => { void this.openFeishuSync(); });
+                return;
+            }
         }
         this.feishuClient.setCredentials(credentials);
         new FeishuSyncDialog({
@@ -631,13 +708,14 @@ export default class DocExportPlugin extends Plugin {
             sync: this.feishuSync,
             i18n: this.i18n as any,
             // 画板图片宽度取自插件设置，改了设置无需重开对话框
-            getOptions: () => ({ ...this.feishuOptions, boardImageWidth: this.getBoardImageWidth() }),
+            getOptions: () => this.getFeishuSyncOptions(),
             saveOptions: this.saveFeishuOptions,
             openSetting: () => this.openSetting(),
             identityLabel: () => this.getFeishuIdentityLabel(),
             isUserMode: () => this.getFeishuCredentials().authMode === "user",
             getMissingScopes: () => this.getMissingUserScopes(),
-            openAuth: () => this.openFeishuAuth(),
+            isAuthorized: () => !!this.feishuAuth?.isAuthorized && this.feishuAuth.belongsTo(this.getFeishuCredentials().appId),
+            openAuth: (onAuthorized) => this.openFeishuAuth(onAuthorized),
         });
     }
 
@@ -681,11 +759,6 @@ export default class DocExportPlugin extends Plugin {
             label: this.i18n.feishuSync,
             accelerator: adaptHotkey("⌃⌥F"),
             click: () => this.openFeishuSync()
-        });
-        menu.addItem({
-            icon: "iconFeishuUser",
-            label: this.i18n.feishuAuthMenu,
-            click: () => this.openFeishuAuth()
         });
         menu.addSeparator();
         menu.addItem({

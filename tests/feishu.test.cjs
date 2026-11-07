@@ -5,6 +5,8 @@ const path = require('node:path');
 const createLoader = require('./load-ts.cjs');
 require('./feishu-sources.test.cjs');
 require('./feishu-security.test.cjs');
+require('./feishu-oauth.test.cjs');
+require('./feishu-workflow.test.cjs');
 const load = createLoader();
 const { docxBlocksToMarkdown: parse } = load('src/libs/feishu-parser.ts');
 const { splitMarkdownChunks, FeishuSync, DEFAULT_SYNC_OPTIONS } = load('src/libs/feishu-sync.ts');

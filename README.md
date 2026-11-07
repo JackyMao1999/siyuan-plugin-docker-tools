@@ -36,8 +36,17 @@ Import documents from Feishu Wiki / Feishu Drive into SiYuan as native documents
 
 To switch: Settings → `Feishu Identity` = User identity, set `OAuth Redirect URL` to exactly the
 same value as configured in the Feishu app console (Security Settings → Redirect URL), then click
-`Open Authorization / Manage` → authorize in the browser → paste the full callback URL back into the
-dialog → `Finish`. See the built-in **Help** (search "user identity") for details.
+`Open Authorization / Manage` → `Use recommended callback URL`, register that exact address in Feishu,
+then authorize in the browser. Keep the authorization dialog open: the plugin exchanges and saves tokens automatically.
+Desktop uses a temporary loopback listener (default `http://127.0.0.1:18879/feishu-callback`); the browser version
+uses `/plugins/siyuan-plugin-docker-tools/feishu-callback.html` on the current SiYuan site. Each client saves its own callback URL. Register both addresses once
+if you use both clients; restarting or switching clients does not rewrite a saved URL. Use a stable SiYuan origin for browser access. Browser authorization must stay in the same browser; allow popups for SiYuan.
+The full callback URL, including `code` and `state`, can also be pasted into the original dialog as a fallback.
+See the built-in **Help** (search "user identity") for details.
+
+Without a refresh token, you must authorize again after the access token expires. Existing grants are not revoked by this default change.
+
+Recursive sync, image/attachment/board downloads, incremental sync and source attribution default to enabled. Configure them in plugin settings; they are not shown in the sync window.
 
 ### What can be listed (Open API limits)
 
@@ -65,7 +74,7 @@ dialog → `Finish`. See the built-in **Help** (search "user identity") for deta
    **User identity** (requires an extra OAuth authorization; the plugin requests these scopes)
    - `wiki:wiki:readonly` `docx:document:readonly` `drive:drive:readonly` (same three, but read with your own account)
    - `board:whiteboard:node:read` (boards / mermaid export)
-   - `offline_access` (refresh_token for automatic renewal)
+   - `offline_access` (optional, **not requested by default**; add it manually to request a refresh token after enabling the permission in Feishu)
    - ⚠️ With user identity, granting a scope in the console is not enough: **new scopes require re-authorization**,
      otherwise the API returns `99991679`. To sync **legacy docs** with user identity, add
      `docs:document.content:read` manually to the "scope" field in the authorization dialog.

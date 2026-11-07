@@ -16,6 +16,7 @@ module.exports = function createLoader(siyuan = {}) {
         }).outputText;
         const localRequire = (name) => {
             if (name === 'siyuan') return siyuan;
+            if (/\.(css|scss)$/.test(name)) return {};
             if (name.startsWith('.')) return load(path.resolve(path.dirname(file), name + '.ts'));
             return require(name);
         };

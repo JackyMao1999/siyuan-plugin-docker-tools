@@ -224,3 +224,24 @@ test('recursive permission failures retain accessible siblings and finish', with
     assert.deepEqual((await d.collectSelectedItems()).map(i => i.key), ['wiki:entry', 'wiki:next']);
     assert.match(d.logs.join('\n'), /permission denied/);
 }));
+
+test('Wiki DOCX rows use document icons even when expandable, and resolved leaves lose their arrow', withDOM(async () => {
+    const d = dialog({ getWikiNode: async () => ({ ...hit(), has_child: false }) });
+    const leaf = d.createNodeElement(d.searchHitToMeta(hit(), []), 0);
+    assert.equal(leaf.querySelector('.feishu-sync__icon').textContent, '📄');
+    assert.equal(checkbox(leaf).disabled, undefined);
+    leaf.querySelector('.feishu-sync__node-title').onclick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(leaf.querySelector('.feishu-sync__toggle').textContent, '');
+    assert.equal(leaf.querySelector('.feishu-sync__children').classList.contains('fn__none'), true);
+    assert.equal(JSON.parse(checkbox(leaf).dataset.meta).expandable, false);
+    assert.equal(JSON.parse(checkbox(leaf).dataset.meta).syncable, true);
+
+    const parent = d.createNodeElement(d.wikiNodeToMeta('space', { ...hit(), has_child: true }, []), 0);
+    assert.equal(parent.querySelector('.feishu-sync__icon').textContent, '📄');
+    assert.equal(parent.querySelector('.feishu-sync__toggle').textContent, '▸');
+    for (const kind of ['space', 'wiki-results', 'drive-root', 'drive-folder']) {
+        const group = d.createNodeElement({ kind, key: kind, title: kind, expandable: true, path: [] }, 0);
+        assert.equal(group.querySelector('.feishu-sync__icon').textContent, '📁');
+    }
+}));
